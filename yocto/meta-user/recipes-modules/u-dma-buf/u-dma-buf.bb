@@ -11,11 +11,4 @@ SRC_URI = "git://github.com/ikwzm/udmabuf;protocol=https;branch=master"
 
 S = "${WORKDIR}/git"
 
-EXTRA_OEMAKE += " \
-	CONFIG_U_DMA_BUF=y \
-	CONFIG_U_DMA_BUF_CONFIG=y \
-	CONFIG_U_DMA_BUF_DEBUG=y \
-	CONFIG_U_DMA_BUF_QUIRK_MMAP=y \
-	CONFIG_U_DMA_BUF_IN_KERNEL_FUNCTIONS=y \
-	CONFIG_U_DMA_BUF_IOCTL=y \
-	"
+EXTRA_OEMAKE += "CONFIG_U_DMA_BUF=m"
