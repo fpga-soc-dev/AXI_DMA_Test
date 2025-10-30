@@ -1,0 +1,8 @@
+# /etc/systemd/network/10-end0.network
+[Match]
+Name=end0
+
+[Network]
+DHCP=no
+Address=192.168.1.100/24
+Metric=200
