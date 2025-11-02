@@ -774,8 +774,8 @@ proc create_root_design { parentCell } {
   set axi_dma_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:axi_dma axi_dma_0 ]
   set_property -dict [list \
     CONFIG.c_include_mm2s {0} \
+    CONFIG.c_include_sg {0} \
     CONFIG.c_s2mm_burst_size {256} \
-    CONFIG.c_sg_include_stscntrl_strm {0} \
   ] $axi_dma_0
 
 
@@ -784,11 +784,12 @@ proc create_root_design { parentCell } {
 
   # Create instance: smartconnect_0, and set properties
   set smartconnect_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect smartconnect_0 ]
+  set_property CONFIG.NUM_SI {1} $smartconnect_0
+
 
   # Create interface connections
   connect_bd_intf_net -intf_net DataGenerator_0_m_axis [get_bd_intf_pins DataGenerator_0/m_axis] [get_bd_intf_pins axi_dma_0/S_AXIS_S2MM]
-  connect_bd_intf_net -intf_net axi_dma_0_M_AXI_S2MM [get_bd_intf_pins axi_dma_0/M_AXI_S2MM] [get_bd_intf_pins smartconnect_0/S01_AXI]
-  connect_bd_intf_net -intf_net axi_dma_0_M_AXI_SG [get_bd_intf_pins axi_dma_0/M_AXI_SG] [get_bd_intf_pins smartconnect_0/S00_AXI]
+  connect_bd_intf_net -intf_net axi_dma_0_M_AXI_S2MM [get_bd_intf_pins axi_dma_0/M_AXI_S2MM] [get_bd_intf_pins smartconnect_0/S00_AXI]
   connect_bd_intf_net -intf_net ps7_0_DDR [get_bd_intf_ports DDR] [get_bd_intf_pins ps7_0/DDR]
   connect_bd_intf_net -intf_net ps7_0_FIXED_IO [get_bd_intf_ports FIXED_IO] [get_bd_intf_pins ps7_0/FIXED_IO]
   connect_bd_intf_net -intf_net ps7_0_M_AXI_GP0 [get_bd_intf_pins ps7_0/M_AXI_GP0] [get_bd_intf_pins ps_ctrl_axi/S00_AXI]
@@ -798,35 +799,34 @@ proc create_root_design { parentCell } {
 
   # Create port connections
   connect_bd_net -net axi_dma_0_s2mm_introut  [get_bd_pins axi_dma_0/s2mm_introut] \
-  [get_bd_pins xlconcat_0/In0]
+  [get_bd_pins xlconcat_0/In0] \
+  [get_bd_pins DataGenerator_0/dma_introut]
   connect_bd_net -net axi_dma_0_s2mm_prmry_reset_out_n  [get_bd_pins axi_dma_0/s2mm_prmry_reset_out_n] \
   [get_bd_ports LED3] \
   [get_bd_pins DataGenerator_0/m_axis_aresetn]
   connect_bd_net -net ps7_0_FCLK_CLK0  [get_bd_pins ps7_0/FCLK_CLK0] \
   [get_bd_ports CLK100] \
-  [get_bd_pins rst_clk_wiz_0_100M/slowest_sync_clk] \
-  [get_bd_pins ps7_0/M_AXI_GP0_ACLK] \
-  [get_bd_pins ps_ctrl_axi/aclk] \
-  [get_bd_pins axi_dma_0/s_axi_lite_aclk] \
-  [get_bd_pins DataGenerator_0/s_axi_aclk]
+  [get_bd_pins rst_clk_wiz_0_100M/slowest_sync_clk]
   connect_bd_net -net ps7_0_FCLK_CLK1  [get_bd_pins ps7_0/FCLK_CLK1] \
-  [get_bd_pins axi_dma_0/m_axi_sg_aclk] \
   [get_bd_pins axi_dma_0/m_axi_s2mm_aclk] \
   [get_bd_pins rst_clk_wiz_0_200M/slowest_sync_clk] \
   [get_bd_pins smartconnect_0/aclk] \
   [get_bd_pins ps7_0/S_AXI_HP0_ACLK] \
+  [get_bd_pins axi_dma_0/s_axi_lite_aclk] \
+  [get_bd_pins ps_ctrl_axi/aclk] \
+  [get_bd_pins ps7_0/M_AXI_GP0_ACLK] \
+  [get_bd_pins DataGenerator_0/s_axi_aclk] \
   [get_bd_pins DataGenerator_0/m_axis_aclk]
   connect_bd_net -net ps7_0_FCLK_RESET0_N  [get_bd_pins ps7_0/FCLK_RESET0_N] \
   [get_bd_pins rst_clk_wiz_0_100M/ext_reset_in] \
   [get_bd_ports FCLK_RESET_N] \
   [get_bd_pins rst_clk_wiz_0_200M/ext_reset_in]
-  connect_bd_net -net rst_clk_wiz_0_100M_peripheral_aresetn  [get_bd_pins rst_clk_wiz_0_100M/peripheral_aresetn] \
+  connect_bd_net -net rst_clk_wiz_0_200M_interconnect_aresetn  [get_bd_pins rst_clk_wiz_0_200M/interconnect_aresetn] \
+  [get_bd_pins smartconnect_0/aresetn] \
+  [get_bd_pins ps_ctrl_axi/aresetn]
+  connect_bd_net -net rst_clk_wiz_0_200M_peripheral_aresetn  [get_bd_pins rst_clk_wiz_0_200M/peripheral_aresetn] \
   [get_bd_pins axi_dma_0/axi_resetn] \
   [get_bd_pins DataGenerator_0/s_axi_aresetn]
-  connect_bd_net -net rst_clk_wiz_0_148_5M_interconnect_aresetn  [get_bd_pins rst_clk_wiz_0_100M/interconnect_aresetn] \
-  [get_bd_pins ps_ctrl_axi/aresetn]
-  connect_bd_net -net rst_clk_wiz_0_200M_interconnect_aresetn  [get_bd_pins rst_clk_wiz_0_200M/interconnect_aresetn] \
-  [get_bd_pins smartconnect_0/aresetn]
   connect_bd_net -net tpg_top_interrupt  [get_bd_pins xlconcat_0/dout] \
   [get_bd_pins ps7_0/IRQ_F2P]
 
@@ -834,7 +834,6 @@ proc create_root_design { parentCell } {
   assign_bd_address -offset 0x40000000 -range 0x00001000 -target_address_space [get_bd_addr_spaces ps7_0/Data] [get_bd_addr_segs DataGenerator_0/s_axi/reg0] -force
   assign_bd_address -offset 0x40400000 -range 0x00010000 -target_address_space [get_bd_addr_spaces ps7_0/Data] [get_bd_addr_segs axi_dma_0/S_AXI_LITE/Reg] -force
   assign_bd_address -offset 0x00000000 -range 0x20000000 -target_address_space [get_bd_addr_spaces axi_dma_0/Data_S2MM] [get_bd_addr_segs ps7_0/S_AXI_HP0/HP0_DDR_LOWOCM] -force
-  assign_bd_address -offset 0x00000000 -range 0x20000000 -target_address_space [get_bd_addr_spaces axi_dma_0/Data_SG] [get_bd_addr_segs ps7_0/S_AXI_HP0/HP0_DDR_LOWOCM] -force
 
 
   # Restore current instance

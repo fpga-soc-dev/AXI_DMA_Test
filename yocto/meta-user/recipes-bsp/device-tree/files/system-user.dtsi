@@ -44,6 +44,7 @@
 
 &axi_dma_0 {
     compatible = "generic-uio";
+    linux,uio-name = "axi-dma";
 };
 
 
