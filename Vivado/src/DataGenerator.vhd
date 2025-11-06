@@ -48,21 +48,23 @@ entity DataGenerator is
         m_axis_tlast   : out std_logic;
         m_axis_tkeep   : out std_logic_vector((C_M_AXIS_TDATA_W/8) - 1 downto 0);
 
-        dma_introut : in std_logic
+        dma_introut : in std_logic;
+        frame_valid : out std_logic
     );
 end entity DataGenerator;
 architecture rtl of DataGenerator is
 
     ------------------------------------------------------------------
     -- Address map (word offsets = addr[5:2])
-    -- 0x00 CONTROL       [0]=ENABLE [1]=SOFT_RESET (self-clearing pulse)
+    -- 0x00 CONTROL       [0]=ENABLE [1]=SOFT_RESET [2]=ARM_INTERVAL (self-clearing)
     -- 0x04 SAMPLE_PERIOD
     -- 0x08 FRAME_SAMPLES
     -- 0x0C FRAME_ID      (R/W current frame counter start)
-    -- 0x10 STATUS        [0]=RUNNING [1]=BACKPRESSURE_SEEN [31:16]=BACKPRESSURE_COUNT
-    -- 0x14 STATUS_CLR    write bit1=1 to clear backpressure flags/counter
-    -- 0x18 VERSION       read-only constant 0x0000DEAD
+    -- 0x10 STATUS        [0]=RUNNING [1]=BP_SEEN [2]=INTERVAL_DONE [31:16]=BP_COUNT
+    -- 0x14 STATUS_CLR    [1]=CLR_BP [2]=CLR_INTERVAL_DONE [3]=CLR_IRQ_COUNT
+    -- 0x18 VERSION       (R/O) 0x0000DEAD
     -- 0x1C INTERVAL_RESULT (R/O) holds the measured interrupt interval
+    -- 0x20 IRQ_COUNT      (R/O) free-running counter of received interrupts
     ------------------------------------------------------------------
 
     constant CONTROL_ENABLE_BIT       : integer := 0;
@@ -76,30 +78,39 @@ architecture rtl of DataGenerator is
     constant VERSION_CONST    : std_logic_vector(31 downto 0) := x"0000DEAD";
 
     -- AXI-lite registers
-    signal reg_control              : std_logic_vector(31 downto 0) := (others => '0');
-    signal reg_sample_period        : unsigned(31 downto 0)         := (others => '0');
-    signal reg_frame_samples        : unsigned(31 downto 0)         := to_unsigned(256, 32);
-    signal reg_frame_id_rw          : unsigned(31 downto 0)         := (others => '0');
-    signal status_running           : std_logic                     := '0';
-    signal status_backpressure_seen : std_logic                     := '0';
-    signal status_backpressure_cnt  : unsigned(15 downto 0)         := (others => '0');
+    signal reg_control       : std_logic_vector(31 downto 0) := (others => '0');
+    signal reg_sample_period : unsigned(31 downto 0)         := (others => '0');
+    signal reg_frame_samples : unsigned(31 downto 0)         := to_unsigned(256, 32);
+    signal reg_frame_id_rw   : unsigned(31 downto 0)         := (others => '0');
+
+    --status signals
+    signal status_running           : std_logic             := '0';
+    signal status_backpressure_seen : std_logic             := '0';
+    signal status_backpressure_cnt  : unsigned(15 downto 0) := (others => '0');
     signal status_word              : std_logic_vector(31 downto 0);
 
+    -- Control pulses
     signal soft_reset_req   : std_logic := '0';
     signal clr_backpressure : std_logic := '0';
 
+    -- Interval Timer signals
     signal arm_interval_req     : std_logic                     := '0';
     signal clr_interval_done    : std_logic                     := '0';
     signal interval_done_flag   : std_logic                     := '0';
     signal interval_result_reg  : std_logic_vector(31 downto 0) := (others => '0');
     signal interval_counter_reg : unsigned(31 downto 0)         := (others => '0');
-
+    signal avg_accumulator      : unsigned(63 downto 0)         := (others => '0');
+    signal avg_sample_count     : unsigned(15 downto 0)         := (others => '0');
+    signal avg_interval_reg     : std_logic_vector(31 downto 0) := (others => '0');
+    signal clr_avg_interval     : std_logic                     := '0';
     type t_measure_fsm is (IDLE, ARMED, TIMING);
     signal measure_fsm : t_measure_fsm := IDLE;
 
-    signal dma_introut_d1  : std_logic := '0';
-    signal irq_rising_edge : std_logic := '0';
+    signal clr_irq_count : std_logic             := '0';
+    signal irq_count_reg : unsigned(31 downto 0) := (others => '0');
 
+    signal dma_introut_d1      : std_logic := '0';
+    signal irq_rising_edge     : std_logic := '0';
     signal dma_introut_sync_d1 : std_logic := '0';
     signal dma_introut_sync_d2 : std_logic := '0';
     signal dma_introut_synced  : std_logic := '0';
@@ -131,19 +142,25 @@ architecture rtl of DataGenerator is
     ------------------------------------------------------------------
     -- Stream generator state
     ------------------------------------------------------------------
-    signal running_i  : std_logic                     := '0';
-    signal frame_id   : unsigned(31 downto 0)         := (others => '0');
-    signal sample_idx : unsigned(31 downto 0)         := (others => '0');
-    signal tvalid_i   : std_logic                     := '0';
-    signal tlast_i    : std_logic                     := '0';
-    signal tdata_i    : std_logic_vector(31 downto 0) := (others => '0');
+    signal running_i  : std_logic             := '0';
+    signal frame_id   : unsigned(31 downto 0) := (others => '0');
+    signal sample_idx : unsigned(31 downto 0) := (others => '0');
+    signal div_cnt    : unsigned(31 downto 0) := (others => '0');
+    signal gap_cnt    : unsigned(6 downto 0)  := (others => '0');
+
+    type t_fsm_state is (FSM_IDLE, FSM_WAIT_DIVIDER, FSM_SEND_WORD, FSM_WAIT_TREADY, FSM_POST_GAP);
+    signal fsm_state : t_fsm_state := FSM_IDLE;
+
+    signal tvalid_i      : std_logic                     := '0';
+    signal tlast_i       : std_logic                     := '0';
+    signal tdata_i       : std_logic_vector(31 downto 0) := (others => '0');
+    signal frame_valid_i : std_logic                     := '0';
 
     -- rate control
-    signal div_cnt    : unsigned(31 downto 0)                           := (others => '0');
-    signal sample_ce  : std_logic                                       := '0';
-    signal tdata_reg  : std_logic_vector(C_M_AXIS_TDATA_W - 1 downto 0) := (others => '0');
-    signal tvalid_reg : std_logic                                       := '0';
-    signal tlast_reg  : std_logic                                       := '0';
+    signal tdata_reg       : std_logic_vector(C_M_AXIS_TDATA_W - 1 downto 0) := (others => '0');
+    signal tvalid_reg      : std_logic                                       := '0';
+    signal tlast_reg       : std_logic                                       := '0';
+    signal frame_valid_reg : std_logic                                       := '0';
 
 begin
 
@@ -177,7 +194,7 @@ begin
                         wstrb_lat  <= s_axi_wstrb;
                         write_fire <= '1';
                         bvalid_i   <= '1';
-                        bresp_i    <= "00"; -- OKAY
+                        bresp_i    <= "00";
                     end if;
 
                 else
@@ -212,9 +229,8 @@ begin
                         arready_i  <= '0';
                         araddr_lat <= s_axi_araddr;
                         read_fire  <= '1';
-
-                        rvalid_i <= '1';
-                        rresp_i  <= "00"; -- OKAY
+                        rvalid_i   <= '1';
+                        rresp_i    <= "00";
                     end if;
 
                 else
@@ -239,16 +255,14 @@ begin
                 reg_frame_samples <= to_unsigned(256, 32);
                 reg_frame_id_rw   <= (others => '0');
 
-                soft_reset_req   <= '0';
-                clr_backpressure <= '0';
-
+                soft_reset_req    <= '0';
+                clr_backpressure  <= '0';
                 arm_interval_req  <= '0';
                 clr_interval_done <= '0';
 
             else
-                soft_reset_req   <= '0';
-                clr_backpressure <= '0';
-
+                soft_reset_req    <= '0';
+                clr_backpressure  <= '0';
                 arm_interval_req  <= '0';
                 clr_interval_done <= '0';
 
@@ -260,9 +274,14 @@ begin
                             reg_control <= wdata_lat;
                             if wdata_lat(CONTROL_SOFT_RESET_BIT) = '1' then
                                 soft_reset_req <= '1';
+                            else
+                                soft_reset_req <= '0';
                             end if;
+
                             if wdata_lat(CONTROL_ARM_INTERVAL_BIT) = '1' then
                                 arm_interval_req <= '1';
+                            else
+                                arm_interval_req <= '0';
                             end if;
 
                         when "0001" => -- SAMPLE_PERIOD
@@ -275,12 +294,28 @@ begin
                             reg_frame_id_rw <= unsigned(wdata_lat);
 
                         when "0101" => -- STATUS_CLR
-                            if wdata_lat(1) = '1' then
+                            if wdata_lat(0) = '1' then
                                 clr_backpressure <= '1';
+                            else
+                                clr_backpressure <= '0';
+                            end if;
+
+                            if wdata_lat(1) = '1' then
+                                clr_interval_done <= '1';
+                            else
+                                clr_interval_done <= '0';
                             end if;
 
                             if wdata_lat(2) = '1' then
-                                clr_interval_done <= '1';
+                                clr_irq_count <= '1';
+                            else
+                                clr_irq_count <= '0';
+                            end if;
+
+                            if wdata_lat(3) = '1' then
+                                clr_avg_interval <= '1';
+                            else
+                                clr_avg_interval <= '0';
                             end if;
 
                         when others =>
@@ -316,7 +351,8 @@ begin
     -----------------------------------------------------------------------------
     status_word_proc : process (status_running,
         status_backpressure_seen,
-        status_backpressure_cnt)
+        status_backpressure_cnt,
+        interval_done_flag)
     begin
         status_word <= (others => '0');
 
@@ -335,7 +371,8 @@ begin
         reg_frame_samples,
         frame_id,
         status_word,
-        interval_result_reg)
+        interval_result_reg,
+        irq_count_reg)
         variable vdata : std_logic_vector(31 downto 0);
     begin
         case araddr_lat(5 downto 2) is
@@ -354,7 +391,7 @@ begin
             when "0100" => -- 0x10 STATUS
                 vdata := status_word;
 
-            when "0101"      => -- 0x14 STATUS_CLR (reads as zero in previous rev)
+            when "0101"      => -- 0x14 STATUS_CLR
                 vdata := (others => '0');
 
             when "0110" => -- 0x18 VERSION
@@ -363,11 +400,29 @@ begin
             when "0111" => -- 0x1C INTERVAL_RESULT
                 vdata := interval_result_reg;
 
+            when "1000" => -- 0x20 IRQ_COUNT
+                vdata := std_logic_vector(irq_count_reg);
+
             when others      =>
                 vdata := (others => '0');
         end case;
 
         rdata_i <= vdata;
+    end process;
+
+    irq_synchronizer_proc : process (s_axi_aclk)
+    begin
+        if rising_edge(s_axi_aclk) then
+            if s_axi_aresetn = '0' then
+                dma_introut_sync_d1 <= '0';
+                dma_introut_sync_d2 <= '0';
+                dma_introut_synced  <= '0';
+            else
+                dma_introut_sync_d1 <= dma_introut;
+                dma_introut_sync_d2 <= dma_introut_sync_d1;
+                dma_introut_synced  <= dma_introut_sync_d2;
+            end if;
+        end if;
     end process;
 
     interval_measure_proc : process (s_axi_aclk)
@@ -380,18 +435,23 @@ begin
                 interval_done_flag   <= '0';
                 dma_introut_d1       <= '0';
                 irq_rising_edge      <= '0';
-                dma_introut_sync_d1  <= '0';
-                dma_introut_sync_d2  <= '0';
-                dma_introut_synced   <= '0';
+
+                avg_accumulator  <= (others => '0');
+                avg_sample_count <= (others => '0');
+                avg_interval_reg <= (others => '0');
             else
-                dma_introut_sync_d1 <= dma_introut;
-                dma_introut_sync_d2 <= dma_introut_sync_d1;
-                dma_introut_synced  <= dma_introut_sync_d2;
-                dma_introut_d1      <= dma_introut_synced;
-                irq_rising_edge     <= (not dma_introut_d1) and dma_introut_synced;
+                dma_introut_d1  <= dma_introut_synced;
+                irq_rising_edge <= (not dma_introut_d1) and dma_introut_synced;
 
                 if clr_interval_done = '1' then
                     interval_done_flag <= '0';
+                end if;
+
+                if clr_avg_interval = '1' then
+                    avg_accumulator  <= (others => '0');
+                    avg_sample_count <= (others => '0');
+                    avg_interval_reg <= (others => '0');
+                    measure_fsm      <= IDLE;
                 end if;
 
                 case measure_fsm is
@@ -416,7 +476,14 @@ begin
                         if irq_rising_edge = '1' then
                             interval_result_reg <= std_logic_vector(interval_counter_reg + 1);
                             interval_done_flag  <= '1';
-                            measure_fsm         <= IDLE;
+
+                            avg_accumulator  <= avg_accumulator + (interval_counter_reg + 1);
+                            avg_sample_count <= avg_sample_count + 1;
+                            if avg_sample_count > 0 then
+                                interval_result_reg <= std_logic_vector(avg_accumulator(47 downto 16) / avg_sample_count);
+                            end if;
+
+                            measure_fsm <= ARMED;
                         else
                             interval_counter_reg <= interval_counter_reg + 1;
                         end if;
@@ -426,6 +493,17 @@ begin
         end if;
     end process;
 
+    irq_counter_proc : process (s_axi_aclk)
+    begin
+        if rising_edge(s_axi_aclk) then
+            if s_axi_aresetn = '0' or soft_reset_req = '1' or clr_irq_count = '1' then
+                irq_count_reg <= (others => '0');
+            elsif irq_rising_edge = '1' then
+                irq_count_reg <= irq_count_reg + 1;
+            end if;
+
+        end if;
+    end process;
     -----------------------------------------------------------------------------
     -- Data generator + backpressure monitor (AXI-Stream source)
     -----------------------------------------------------------------------------
@@ -434,21 +512,24 @@ begin
         if rising_edge(s_axi_aclk) then
             if (s_axi_aresetn = '0') or (soft_reset_req = '1') then
                 div_cnt                  <= (others => '0');
-                sample_ce                <= '0';
-                frame_id                 <= reg_frame_id_rw; -- Preload from RW reg
+                frame_id                 <= reg_frame_id_rw;
                 sample_idx               <= (others => '0');
                 tvalid_i                 <= '0';
                 tlast_i                  <= '0';
+                tdata_i                  <= (others => '0');
                 status_backpressure_seen <= '0';
                 status_backpressure_cnt  <= (others => '0');
-                tdata_i                  <= (others => '0'); -- Reset data output
+                gap_cnt                  <= (others => '0');
+                fsm_state                <= FSM_IDLE;
+                frame_valid_i            <= '0';
 
             elsif clr_backpressure = '1' then
                 status_backpressure_seen <= '0';
                 status_backpressure_cnt  <= (others => '0');
 
             else
-                sample_ce <= '0';
+                tlast_i  <= '0';
+                tvalid_i <= '0';
 
                 if (tvalid_i = '1') and (m_axis_tready = '0') then
                     status_backpressure_seen <= '1';
@@ -457,52 +538,70 @@ begin
                     end if;
                 end if;
 
-                if (tvalid_i = '1') and (m_axis_tready = '1') then
-                    tvalid_i <= '0';
-                    tlast_i  <= '0';
-                end if;
+                case fsm_state is
 
-                if running_i = '1' then
-                    if tvalid_i = '0' then
+                    when FSM_IDLE =>
+                        frame_valid_i <= '0';
+                        sample_idx    <= (others => '0');
+
+                        if running_i = '1' then
+                            fsm_state <= FSM_WAIT_DIVIDER;
+                        else
+                            div_cnt   <= (others => '0');
+                            tdata_i   <= (others => '0');
+                            frame_id  <= reg_frame_id_rw;
+                            fsm_state <= FSM_IDLE;
+                        end if;
+
+                    when FSM_WAIT_DIVIDER =>
+                        frame_valid_i <= '1';
                         if div_cnt = reg_sample_period then
-                            div_cnt <= (others => '0');
-
-                            if reg_frame_samples /= 0 then
-                                sample_ce <= '1';
-                            end if;
+                            div_cnt   <= (others => '0');
+                            fsm_state <= FSM_SEND_WORD;
                         else
                             div_cnt   <= div_cnt + 1;
-                            sample_ce <= '0';
+                            fsm_state <= FSM_WAIT_DIVIDER;
                         end if;
 
-                        if sample_ce = '1' then
-                            if sample_idx = to_unsigned(0, 32) then
-                                tdata_i <= std_logic_vector(frame_id);
-                            else
-                                tdata_i <= std_logic_vector(sample_idx);
-                            end if;
+                    when FSM_SEND_WORD =>
+                        frame_valid_i <= '1';
 
-                            if sample_idx = (reg_frame_samples - 1) then
-                                tlast_i    <= '1';
-                                sample_idx <= (others => '0');
+                        if sample_idx = to_unsigned(0, 32) then
+                            tdata_i <= std_logic_vector(frame_id);
+                        else
+                            tdata_i <= std_logic_vector(frame_id + sample_idx);
+                        end if;
+
+                        if sample_idx = reg_frame_samples - 1 then
+                            tlast_i <= '1';
+                        end if;
+
+                        fsm_state <= FSM_WAIT_TREADY;
+
+                    when FSM_WAIT_TREADY =>
+
+                        if sample_idx = reg_frame_samples - 1 then
+                            tlast_i <= '1';
+                        end if;
+
+                        if m_axis_tready = '1' then
+                            frame_valid_i <= '1';
+                            tvalid_i      <= '1';
+                            if sample_idx = reg_frame_samples - 1 then
                                 frame_id   <= frame_id + 1;
+                                sample_idx <= (others => '0');
+                                fsm_state  <= FSM_IDLE;
                             else
-                                tlast_i    <= '0';
                                 sample_idx <= sample_idx + 1;
+                                fsm_state  <= FSM_WAIT_DIVIDER;
                             end if;
 
-                            tvalid_i <= '1';
                         end if;
 
-                    end if;
+                    when FSM_POST_GAP =>
+                        fsm_state <= FSM_IDLE;
 
-                else
-                    tvalid_i   <= '0';
-                    tlast_i    <= '0';
-                    sample_idx <= (others => '0');
-                    div_cnt    <= (others => '0');
-                    frame_id   <= reg_frame_id_rw;
-                end if;
+                end case;
             end if;
         end if;
     end process;
@@ -511,13 +610,15 @@ begin
     begin
         if rising_edge(s_axi_aclk) then
             if s_axi_aresetn = '0' then
-                tdata_reg  <= (others => '0');
-                tvalid_reg <= '0';
-                tlast_reg  <= '0';
+                tdata_reg       <= (others => '0');
+                tvalid_reg      <= '0';
+                tlast_reg       <= '0';
+                frame_valid_reg <= '0';
             else
-                tdata_reg  <= tdata_i;
-                tvalid_reg <= tvalid_i;
-                tlast_reg  <= tlast_i;
+                tdata_reg       <= tdata_i;
+                tvalid_reg      <= tvalid_i;
+                tlast_reg       <= tlast_i;
+                frame_valid_reg <= frame_valid_i;
             end if;
         end if;
     end process;
@@ -529,6 +630,8 @@ begin
     m_axis_tvalid <= tvalid_reg;
     m_axis_tlast  <= tlast_reg;
     m_axis_tkeep  <= (others => '1');
+
+    frame_valid <= frame_valid_reg;
 
     -----------------------------------------------------------------------------
     -- Drive AXI-Lite outputs
