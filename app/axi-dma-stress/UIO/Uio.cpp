@@ -45,6 +45,7 @@ void *UIO::Ptr()
     uint8_t *ptr = static_cast<uint8_t *>(m_Fm.Ptr()) + m_Offset;
     return static_cast<void *>(ptr);
 }
+
 void UIO::Write(uint32_t device_register, uint32_t value)
 {
     uint32_t *baseAddress32 = static_cast<uint32_t *>(Ptr());

@@ -15,6 +15,7 @@ public:
     static constexpr uint32_t STATUS_CLR = 0x14;
     static constexpr uint32_t VERSION = 0x18;
     static constexpr uint32_t INTERVAL_RESULT = 0x1C;
+    static constexpr uint32_t IRQ_COUNT = 0x20;
 
     static constexpr uint32_t DATA_GENERATOR_FREQ = 200'000'000; // 200 MHz
     static constexpr uint32_t AXI_DATA_SIZE_BYTES = 4;           // 32-bit data
@@ -39,13 +40,17 @@ public:
     void Start(uint32_t frame_samples, uint32_t interval_us);
     uint32_t GetFrameSize();
     uint32_t GetBackPressureCount();
+    uint32_t GetInterruptCount();
     double GetIntervalResultMs();
-    void StatusClear();
-    void SoftReset();
+    void ClearIntervalDone();
+    void ClearBackPressureCount();
+    void ClearInterruptCount();
+    void ClearAverageInterval();
     void Stop();
 
 private:
     std::unique_ptr<UIO> m_UioDevice;
 
     uint32_t ComputeSamplePeriod(uint32_t interval_us, uint32_t axi_clock_freq, uint32_t frame_samples);
+    void SoftReset();
 };

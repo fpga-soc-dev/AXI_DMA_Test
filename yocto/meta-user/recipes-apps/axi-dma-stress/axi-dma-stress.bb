@@ -18,8 +18,17 @@ SRC_URI = "\
     file://DmaBuffer/UDmaBufferIoctl.hpp \
     file://AxiDataGen/AxiDataGen.cpp \
     file://AxiDataGen/AxiDataGen.hpp \   
+    file://AxiTrafficGen/AxiTrafficGen.cpp \
+    file://AxiTrafficGen/AxiTrafficGen.hpp \
+    file://UIO/Uio.cpp \
+    file://UIO/Uio.hpp \
     file://AxiDma/AxiDma.cpp \
     file://AxiDma/AxiDma.hpp \
+    file://AxiDma/AxiDmaBd.cpp \
+    file://AxiDma/AxiDmaBd.hpp \
+    file://AxiDma/AxiDmaHw.hpp \
+    file://AxiDma/AxiDmaBdRing.hpp \
+    file://AxiDma/AxiDmaBdRing.cpp \
     "
 
 S = "${WORKDIR}"

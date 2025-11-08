@@ -89,7 +89,8 @@ architecture rtl of pynq_z1_top is
       FIXED_IO_ps_srstb : inout std_logic;
       CLK100            : out std_logic;
       FCLK_RESET_N      : out std_logic;
-            
+      
+      LED2               : out std_logic;
       LED3               : out std_logic
       
     );
@@ -136,6 +137,7 @@ begin
       FIXED_IO_ps_clk           => FIXED_IO_ps_clk,
       FIXED_IO_ps_porb          => FIXED_IO_ps_porb,
       FIXED_IO_ps_srstb         => FIXED_IO_ps_srstb,
+      LED2                      => LED2,
       LED3                      => LED3
     );
         

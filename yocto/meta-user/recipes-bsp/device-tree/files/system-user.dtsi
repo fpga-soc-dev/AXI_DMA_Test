@@ -39,15 +39,23 @@
 
 &DataGenerator_0 {
     compatible = "generic-uio";
-    linux,uio-name = "data-generator";
+    linux,uio-name = "data-generator-dma-simple";
+};
+
+&DataGenerator_1 {
+    compatible = "generic-uio";
+    linux,uio-name = "data-generator-dma-sg";
 };
 
 &axi_dma_0 {
     compatible = "generic-uio";
-    linux,uio-name = "axi-dma";
+    linux,uio-name = "axi-dma-simple";
 };
 
-
+&axi_dma_1 {
+    compatible = "generic-uio";
+    linux,uio-name = "axi-dma-sg";
+};
 
 
 

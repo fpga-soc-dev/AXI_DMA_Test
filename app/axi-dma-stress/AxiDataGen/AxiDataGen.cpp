@@ -7,6 +7,8 @@ AxiDataGen::AxiDataGen(const std::string &uio_device) : m_UioDevice(std::make_un
 
 AxiDataGen::~AxiDataGen()
 {
+    Stop();
+    SoftReset();
 }
 
 uint32_t AxiDataGen::ReadVersion()
@@ -16,12 +18,16 @@ uint32_t AxiDataGen::ReadVersion()
 
 void AxiDataGen::Start(uint32_t frame_samples, uint32_t interval_us)
 {
-    m_UioDevice->Write(CONTROL, 0x0);
-    if (m_UioDevice->Read(CONTROL) != 0x0)
+    auto version = ReadVersion();
+    if (version != 0x0000DEAD)
     {
-        SPDLOG_WARN(" CONTROL register not zero after disable");
+        SPDLOG_WARN("Unexpected AxiDataGen version: 0x{:08X}", version);
     }
-    StatusClear();
+
+    ClearBackPressureCount();
+    ClearIntervalDone();
+    ClearInterruptCount();
+    ClearAverageInterval();
     SoftReset();
 
     uint32_t desired_interval_us = interval_us;
@@ -95,14 +101,70 @@ uint32_t AxiDataGen::GetBackPressureCount()
     return (m_UioDevice->Read(STATUS) >> 16) & 0xFFFF;
 }
 
-void AxiDataGen::StatusClear()
+uint32_t AxiDataGen::GetInterruptCount()
 {
-    m_UioDevice->Write(STATUS_CLR, 0x2);
+    return m_UioDevice->Read(IRQ_COUNT);
+}
+
+void AxiDataGen::ClearBackPressureCount()
+{
+    uint32_t status = m_UioDevice->Read(STATUS_CLR);
+    m_UioDevice->Write(STATUS_CLR, status | 0x1);
+    std::this_thread::sleep_for(std::chrono::microseconds(10));
+    m_UioDevice->Write(STATUS_CLR, status & ~0x1);
+
+    if (m_UioDevice->Read(STATUS_CLR) & 0x1)
+    {
+        SPDLOG_WARN("BACKPRESSURE_COUNT register not cleared after ClearBackPressureCount");
+    }
+}
+
+void AxiDataGen::ClearIntervalDone()
+{
+    uint32_t status = m_UioDevice->Read(STATUS_CLR);
+    m_UioDevice->Write(STATUS_CLR, status | 0x2);
+    std::this_thread::sleep_for(std::chrono::microseconds(10));
+    m_UioDevice->Write(STATUS_CLR, status & ~0x2);
+
+    if (m_UioDevice->Read(STATUS_CLR) & 0x2)
+    {
+        SPDLOG_WARN("INTERVAL_DONE register not cleared after ClearIntervalDone");
+    }
+}
+
+void AxiDataGen::ClearInterruptCount()
+{
+    uint32_t status = m_UioDevice->Read(STATUS_CLR);
+    m_UioDevice->Write(STATUS_CLR, status | 0x4);
+    std::this_thread::sleep_for(std::chrono::microseconds(10));
+    m_UioDevice->Write(STATUS_CLR, status & ~0x4);
+
+    if (m_UioDevice->Read(STATUS_CLR) & 0x4)
+    {
+        SPDLOG_WARN("IRQ_COUNT register not cleared after ClearInterruptCount");
+    }
+}
+
+void AxiDataGen::ClearAverageInterval()
+{
+    uint32_t status = m_UioDevice->Read(STATUS_CLR);
+    m_UioDevice->Write(STATUS_CLR, status | 0x8);
+    std::this_thread::sleep_for(std::chrono::microseconds(10));
+    m_UioDevice->Write(STATUS_CLR, status & ~0x8);
+
+    if (m_UioDevice->Read(STATUS_CLR) & 0x8)
+    {
+        SPDLOG_WARN("AVERAGE_INTERVAL register not cleared after ClearAverageInterval");
+    }
 }
 
 void AxiDataGen::SoftReset()
 {
-    m_UioDevice->Write(CONTROL, CONTROL_SOFT_RESET_BIT);
+    uint32_t control = m_UioDevice->Read(CONTROL);
+
+    m_UioDevice->Write(CONTROL, control | CONTROL_SOFT_RESET_BIT);
+    std::this_thread::sleep_for(std::chrono::microseconds(100));
+    m_UioDevice->Write(CONTROL, control & ~CONTROL_SOFT_RESET_BIT);
 }
 
 double AxiDataGen::GetIntervalResultMs()

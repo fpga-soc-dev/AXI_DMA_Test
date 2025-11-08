@@ -1,14 +1,40 @@
 #pragma once
 
-#include "Uio.hpp"
 #include <memory>
 #include <string>
-#include <cstdint>
+#include "Uio.hpp"
+#include "AxiDmaBdRing.hpp"
 
 namespace Dma
 {
     class AxiDma
     {
+    public:
+        struct Config
+        {
+            bool HasStsCntrlStrm{false};
+            bool HasMm2s{false};
+            bool HasMm2sDRE{false};
+            int Mm2SDataWidth{0};
+            bool HasS2mm{false};
+            bool HasS2mmDRE{false};
+            int S2MmDataWidth{32};
+            bool HasScatterGather{false};
+            int Mm2SNumChannels{0};
+            int S2MmNumChannels{1};
+            int Mm2SBurstSize{0};
+            int S2MmBurstSize{256};
+            bool MicroDmaChannel{false};
+            int AddressWidth{32};
+            int BufferLengthRegister{26};
+        };
+
+        enum class Direction
+        {
+            MM2S,
+            S2MM
+        };
+
     public:
         static constexpr uint32_t MM2S_CONTROL_REGISTER = 0x00;
         static constexpr uint32_t MM2S_STATUS_REGISTER = 0x04;
@@ -53,51 +79,51 @@ namespace Dma
             uint8_t irq_delay;
         };
 
-        AxiDma(const std::string &uio_device);
+        AxiDma(const std::string &uio_device, Config config);
         ~AxiDma();
 
-        void ResetMm2s();
-        void ResetS2mm();
+        void XAxiDmaReset();
+        void XAxiDmaIntrDisable(Direction direction, std::uint32_t mask);
+        void XAxiDmaIntrEnable(Direction direction, std::uint32_t mask);
+        std::uint32_t XAxiDmaIntrGetIrq(Direction direction);
+        bool XAxiDmaSelectCyclicMode(Direction direction, bool enable);
+        bool XAxiDmaSelectKeyHoleMode(Direction direction, bool enable);
+        void XAxiDmaSetBufferAddress(Direction direction, std::uint64_t buffer_address);
+        void XAxiDmaStart(Direction direction, bool start);
+        void XAxiDmaLength(Direction direction, std::uint32_t length);
 
-        void HaltMm2s();
-        void HaltS2mm();
+        bool XAxiDmaSimpleTransfer(Direction direction, std::uint64_t buffer_address, std::uint32_t length);
 
-        void SetSourceAddress(uint64_t address);
-        void SetDestinationAddress(uint64_t address);
+        void XAxiDmaWaitSync(Direction direction);
 
-        void SetAllInterruptsMaskedMm2s();
-        void SetAllInterruptsMaskedS2mm();
+        StatusBits XAxiDmaStatusRead(Direction direction);
+        void XAxiDmaPrintStatus(Direction direction);
+        ControlBits XAxiDmaControlRead(Direction direction);
+        void XAxiDmaPrintControl(Direction direction);
 
-        void SetMm2sLength(uint32_t length);
-        void SetS2mmLength(uint32_t length);
+        void XAxiDmaClearInterrupts(Direction direction);
 
-        void WaitS2mmSync();
-        void WaitMm2sSync();
-
-        void ClearAllInterruptsMm2s();
-        void ClearAllInterruptsS2mm();
-
-        StatusBits ReadMm2sStatus();
-        StatusBits ReadS2mmStatus();
-        ControlBits ReadMm2sControl();
-        ControlBits ReadS2mmControl();
-
-        void StartS2mm(uint64_t address, uint32_t length);
-        void StartMm2s(uint64_t address, uint32_t length);
         void Stop();
 
-        void PrintMm2sStatus();
-        void PrintS2mmStatus();
-        void PrintMm2sControl();
-        void PrintS2mmControl();
-
-        void AttachS2mmInterruptHandler(const std::function<void()> &callback, bool queue_enabled = false);
-        void DetachS2mmInterruptHandler();
+        void AttachInterruptHandler(Direction direction, const std::function<void()> &callback, bool queue_enabled = false);
+        void DetachInterruptHandler();
 
     private:
-        std::unique_ptr<UIO> m_UioDevice;
+        std::shared_ptr<UIO> m_UioDevice;
         std::function<void()> m_S2mmCallback;
+        std::function<void()> m_Mm2sCallback;
+        Config m_Config;
+        bool m_IsInitialized{false};
+        XAxiDmaBdRing m_TxBdRing;
+        XAxiDmaBdRing m_RxBdRing;
 
-        void OnInterruptS2mm();
+        bool InitializeConfig();
+        bool HasMM2S();
+        bool HasS2MM();
+        bool HasScatterGather();
+        bool XAxiDmaResetIsDone();
+        bool XAxiDmaBusy(Direction direction);
+
+        void OnS2mmInterrupt();
     };
 }

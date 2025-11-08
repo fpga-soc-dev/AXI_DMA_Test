@@ -1,204 +1,498 @@
 #include "AxiDma.hpp"
+#include "AxiDmaHw.hpp"
 #include <spdlog/spdlog.h>
 
 namespace Dma
 {
-    AxiDma::AxiDma(const std::string &uio_device) : m_UioDevice(std::make_unique<UIO>(uio_device))
+    AxiDma::AxiDma(const std::string &uio_device, Config config) : m_UioDevice(std::make_shared<UIO>(uio_device)),
+                                                                   m_Config(config),
+                                                                   m_TxBdRing(m_UioDevice),
+                                                                   m_RxBdRing(m_UioDevice)
+
     {
+        if (!InitializeConfig())
+        {
+            SPDLOG_ERROR("Failed to initialize DMA configuration.");
+        }
+
+        if (m_Config.HasScatterGather)
+        {
+            SPDLOG_INFO("DMA initialized in Scatter-Gather mode.");
+        }
+        else
+        {
+            SPDLOG_INFO("DMA initialized in Simple mode.");
+        }
     }
 
     AxiDma::~AxiDma()
     {
+        Stop();
     }
 
-    AxiDma::StatusBits AxiDma::ReadMm2sStatus()
+    bool AxiDma::InitializeConfig()
     {
-        uint32_t status_reg = m_UioDevice->Read(MM2S_STATUS_REGISTER);
-        StatusBits status;
+        uint32_t max_transfer_len{0};
+        m_IsInitialized = false;
+        m_Config.HasMm2s = HasMM2S();
+        m_Config.HasS2mm = HasS2MM();
+        m_Config.HasScatterGather = HasScatterGather();
 
-        status.halted = status_reg & 0x1;
-        status.idle = (status_reg >> 1) & 0x1;
-        status.sg_included = (status_reg >> 3) & 0x1;
-        status.dma_internal_error = (status_reg >> 4) & 0x1;
-        status.dma_slave_error = (status_reg >> 5) & 0x1;
-        status.dma_decode_error = (status_reg >> 6) & 0x1;
-        status.sg_internal_error = (status_reg >> 8) & 0x1;
-        status.sg_slave_error = (status_reg >> 9) & 0x1;
-        status.sg_decode_error = (status_reg >> 10) & 0x1;
-        status.ioc_irq = (status_reg >> 12) & 0x1;
-        status.dly_irq = (status_reg >> 13) & 0x1;
-        status.err_irq = (status_reg >> 14) & 0x1;
-        status.irq_threshold_sts = (status_reg >> 16) & 0xFF;
-        status.irq_delay_sts = (status_reg >> 24) & 0xFF;
-
-        return status;
-    }
-
-    AxiDma::StatusBits AxiDma::ReadS2mmStatus()
-    {
-        uint32_t status_reg = m_UioDevice->Read(S2MM_STATUS_REGISTER);
-        StatusBits status;
-
-        status.halted = status_reg & 0x1;
-        status.idle = (status_reg >> 1) & 0x1;
-        status.sg_included = (status_reg >> 3) & 0x1;
-        status.dma_internal_error = (status_reg >> 4) & 0x1;
-        status.dma_slave_error = (status_reg >> 5) & 0x1;
-        status.dma_decode_error = (status_reg >> 6) & 0x1;
-        status.sg_internal_error = (status_reg >> 8) & 0x1;
-        status.sg_slave_error = (status_reg >> 9) & 0x1;
-        status.sg_decode_error = (status_reg >> 10) & 0x1;
-        status.ioc_irq = (status_reg >> 12) & 0x1;
-        status.dly_irq = (status_reg >> 13) & 0x1;
-        status.err_irq = (status_reg >> 14) & 0x1;
-        status.irq_threshold_sts = (status_reg >> 16) & 0xFF;
-        status.irq_delay_sts = (status_reg >> 24) & 0xFF;
-
-        return status;
-    }
-
-    AxiDma::ControlBits AxiDma::ReadMm2sControl()
-    {
-        uint32_t control_reg = m_UioDevice->Read(MM2S_CONTROL_REGISTER);
-        ControlBits control;
-
-        control.rs = control_reg & 0x1;
-        control.reset = (control_reg >> 2) & 0x1;
-        control.keyhole = (control_reg >> 3) & 0x1;
-        control.cyclic_bd_enable = (control_reg >> 4) & 0x1;
-        control.ioc_irq_enable = (control_reg >> 12) & 0x1;
-        control.dly_irq_enable = (control_reg >> 13) & 0x1;
-        control.err_irq_enable = (control_reg >> 14) & 0x1;
-        control.irq_threshold = (control_reg >> 16) & 0xFF;
-        control.irq_delay = (control_reg >> 24) & 0xFF;
-
-        return control;
-    }
-
-    AxiDma::ControlBits AxiDma::ReadS2mmControl()
-    {
-        uint32_t control_reg = m_UioDevice->Read(S2MM_CONTROL_REGISTER);
-        ControlBits control;
-
-        control.rs = control_reg & 0x1;
-        control.reset = (control_reg >> 2) & 0x1;
-        control.keyhole = (control_reg >> 3) & 0x1;
-        control.cyclic_bd_enable = (control_reg >> 4) & 0x1;
-        control.ioc_irq_enable = (control_reg >> 12) & 0x1;
-        control.dly_irq_enable = (control_reg >> 13) & 0x1;
-        control.err_irq_enable = (control_reg >> 14) & 0x1;
-        control.irq_threshold = (control_reg >> 16) & 0xFF;
-        control.irq_delay = (control_reg >> 24) & 0xFF;
-
-        return control;
-    }
-
-    void AxiDma::ResetMm2s()
-    {
-        uint32_t control_reg = m_UioDevice->Read(MM2S_CONTROL_REGISTER);
-        control_reg |= 0x4; // Set the reset bit
-        m_UioDevice->Write(MM2S_CONTROL_REGISTER, control_reg);
-
-        do
+        if (m_Config.Mm2SNumChannels > 1 || m_Config.S2MmNumChannels > 1)
         {
-            control_reg = m_UioDevice->Read(MM2S_CONTROL_REGISTER);
-        } while (control_reg & 0x4);
-        SPDLOG_DEBUG("MM2S reset complete");
-    }
-
-    void AxiDma::ResetS2mm()
-    {
-        uint32_t control_reg = m_UioDevice->Read(S2MM_CONTROL_REGISTER);
-        control_reg |= 0x4; // Set the reset bit
-        m_UioDevice->Write(S2MM_CONTROL_REGISTER, control_reg);
-
-        do
+            max_transfer_len = XAXIDMA_MCHAN_MAX_TRANSFER_LEN;
+        }
+        else
         {
-            control_reg = m_UioDevice->Read(S2MM_CONTROL_REGISTER);
-        } while (control_reg & 0x4);
-        SPDLOG_DEBUG("S2MM reset complete");
-    }
+            max_transfer_len = (1U << m_Config.BufferLengthRegister) - 1;
+        }
 
-    void AxiDma::HaltMm2s()
-    {
-        uint32_t control_reg = m_UioDevice->Read(MM2S_CONTROL_REGISTER);
-        control_reg &= ~0x1; // Clear the run/stop bit
-        m_UioDevice->Write(MM2S_CONTROL_REGISTER, control_reg);
-        SPDLOG_DEBUG("MM2S halted");
-    }
-
-    void AxiDma::HaltS2mm()
-    {
-        uint32_t control_reg = m_UioDevice->Read(S2MM_CONTROL_REGISTER);
-        control_reg &= ~0x1; // Clear the run/stop bit
-        m_UioDevice->Write(S2MM_CONTROL_REGISTER, control_reg);
-        SPDLOG_DEBUG("S2MM halted");
-    }
-
-    void AxiDma::SetSourceAddress(uint64_t address)
-    {
-        uint32_t address_low = static_cast<uint32_t>(address & 0xFFFFFFFF);
-        uint32_t address_high = static_cast<uint32_t>((address >> 32) & 0xFFFFFFFF);
-        m_UioDevice->Write(MM2S_START_ADDRESS, address_low);
-        m_UioDevice->Write(MM2S_START_ADDRESS_MSB, address_high);
-        SPDLOG_DEBUG("MM2S source address set to 0x{:08X}{:08X}", address_high, address_low);
-    }
-
-    void AxiDma::SetDestinationAddress(uint64_t address)
-    {
-        uint32_t address_low = static_cast<uint32_t>(address & 0xFFFFFFFF);
-        uint32_t address_high = static_cast<uint32_t>((address >> 32) & 0xFFFFFFFF);
-        m_UioDevice->Write(S2MM_START_ADDRESS, address_low);
-        m_UioDevice->Write(S2MM_START_ADDRESS_MSB, address_high);
-        SPDLOG_DEBUG("S2MM destination address set to 0x{:08X}{:08X}", address_high, address_low);
-    }
-
-    void AxiDma::SetMm2sLength(uint32_t length)
-    {
-        m_UioDevice->Write(MM2S_LENGTH, length);
-        SPDLOG_DEBUG("MM2S length set to {}", length);
-    }
-
-    void AxiDma::SetS2mmLength(uint32_t length)
-    {
-        m_UioDevice->Write(S2MM_LENGTH, length);
-        SPDLOG_DEBUG("S2MM length set to {}", length);
-    }
-
-    void AxiDma::SetAllInterruptsMaskedMm2s()
-    {
-        uint32_t control_reg = m_UioDevice->Read(MM2S_CONTROL_REGISTER);
-        control_reg |= 0xF001;
-        m_UioDevice->Write(MM2S_CONTROL_REGISTER, control_reg);
-        SPDLOG_DEBUG("MM2S all interrupts masked");
-    }
-
-    void AxiDma::SetAllInterruptsMaskedS2mm()
-    {
-        uint32_t control_reg = m_UioDevice->Read(S2MM_CONTROL_REGISTER);
-        control_reg |= 0xF001; // Mask all interrupts
-        m_UioDevice->Write(S2MM_CONTROL_REGISTER, control_reg);
-        SPDLOG_DEBUG("S2MM all interrupts masked");
-    }
-
-    void AxiDma::WaitS2mmSync()
-    {
-        StatusBits status = ReadS2mmStatus();
-        while (!status.idle)
+        m_TxBdRing.m_RunState = XAxiDmaBdRing::AXIDMA_CHANNEL_HALTED;
+        m_TxBdRing.m_IsRxChannel = false;
+        if (!m_Config.MicroDmaChannel)
         {
-            if (status.dma_internal_error || status.dma_slave_error || status.dma_decode_error)
+            m_TxBdRing.m_MaxTransferLen = max_transfer_len;
+        }
+        else
+        {
+            /* In MicroDMA mode, Maximum length that can be transferred
+             * is '(Memory Data Width / 8) * Burst Size' */
+            m_TxBdRing.m_MaxTransferLen = ((m_Config.Mm2SDataWidth / 8) * m_Config.Mm2SBurstSize);
+        }
+
+        m_TxBdRing.m_RingIndex = 0;
+
+        m_RxBdRing.m_RunState = XAxiDmaBdRing::AXIDMA_CHANNEL_HALTED;
+        m_RxBdRing.m_IsRxChannel = true;
+        m_RxBdRing.m_RingIndex = 0;
+
+        if (m_Config.HasMm2s)
+        {
+            SPDLOG_INFO("Configuring MM2S channel.");
+            m_TxBdRing.m_ChanBaseOffset = XAXIDMA_TX_OFFSET;
+            m_TxBdRing.m_HasStsCntrlStrm = m_Config.HasStsCntrlStrm;
+            if (m_Config.AddressWidth > 32)
             {
-                SPDLOG_ERROR("S2MM encountered an error during transfer");
+                m_TxBdRing.m_Addr_ext = true;
+            }
+            else
+            {
+                m_TxBdRing.m_Addr_ext = false;
+            }
+
+            m_TxBdRing.m_HasDRE = m_Config.HasMm2sDRE;
+            m_TxBdRing.m_DataWidth = (m_Config.Mm2SDataWidth >> 3);
+        }
+
+        if (m_Config.HasS2mm)
+        {
+            SPDLOG_INFO("Configuring S2MM channel.");
+            m_RxBdRing.m_ChanBaseOffset = XAXIDMA_RX_OFFSET;
+            m_RxBdRing.m_HasStsCntrlStrm = m_Config.HasStsCntrlStrm;
+            m_RxBdRing.m_HasDRE = m_Config.HasS2mmDRE;
+            m_RxBdRing.m_DataWidth = (m_Config.S2MmDataWidth >> 3);
+
+            if (!m_Config.MicroDmaChannel)
+            {
+                m_RxBdRing.m_MaxTransferLen = max_transfer_len;
+            }
+            else
+            {
+                /* In MicroDMA mode, Maximum length that can be transferred is '(Memory Data Width / 8) * Burst Size' */
+                m_RxBdRing.m_MaxTransferLen = ((m_Config.S2MmDataWidth / 8) * m_Config.S2MmBurstSize);
+            }
+
+            if (m_Config.AddressWidth > 32)
+            {
+                m_RxBdRing.m_Addr_ext = 1;
+            }
+            else
+            {
+                m_RxBdRing.m_Addr_ext = 0;
+            }
+        }
+
+        XAxiDmaReset();
+
+        int timeout = 1000;
+        while (timeout--)
+        {
+            if (XAxiDmaResetIsDone())
+            {
                 break;
             }
-            status = ReadS2mmStatus();
         }
-        SPDLOG_DEBUG("S2MM Transfer complete");
+
+        if (timeout == 0)
+        {
+            SPDLOG_ERROR("DMA Reset did not complete within the timeout period.");
+            return false;
+        }
+
+        if (m_Config.HasMm2s)
+        {
+            XAxiDmaIntrDisable(Direction::MM2S, XAXIDMA_IRQ_ALL_MASK);
+            XAxiDmaIntrEnable(Direction::MM2S, XAXIDMA_IRQ_ALL_MASK);
+        }
+        if (m_Config.HasS2mm)
+        {
+            XAxiDmaIntrDisable(Direction::S2MM, XAXIDMA_IRQ_ALL_MASK);
+            XAxiDmaIntrEnable(Direction::S2MM, XAXIDMA_IRQ_ALL_MASK);
+        }
+
+        m_IsInitialized = true;
+        return true;
     }
 
-    void AxiDma::WaitMm2sSync()
+    bool AxiDma::HasMM2S()
     {
-        StatusBits status = ReadMm2sStatus();
+        return (m_UioDevice->Read(XAXIDMA_TX_OFFSET + XAXIDMA_CR_OFFSET) & XAXIDMA_CR_RESERVED) != 0;
+    }
+
+    bool AxiDma::HasS2MM()
+    {
+        return (m_UioDevice->Read(XAXIDMA_RX_OFFSET + XAXIDMA_CR_OFFSET) & XAXIDMA_CR_RESERVED) != 0;
+    }
+
+    bool AxiDma::HasScatterGather()
+    {
+        return (m_UioDevice->Read(XAXIDMA_TX_OFFSET + XAXIDMA_SR_OFFSET) & XAXIDMA_SG_INCLUDE_MASK) != 0 ||
+               (m_UioDevice->Read(XAXIDMA_RX_OFFSET + XAXIDMA_SR_OFFSET) & XAXIDMA_SG_INCLUDE_MASK) != 0;
+    }
+
+    void AxiDma::XAxiDmaIntrDisable(Direction direction, std::uint32_t mask)
+    {
+        if (direction == Direction::MM2S)
+        {
+            auto reg = m_UioDevice->Read(m_TxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET);
+            reg &= ~(mask & XAXIDMA_IRQ_ALL_MASK);
+            m_UioDevice->Write(m_TxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET, reg);
+        }
+        else if (direction == Direction::S2MM)
+        {
+            auto reg = m_UioDevice->Read(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET);
+            reg &= ~(mask & XAXIDMA_IRQ_ALL_MASK);
+            m_UioDevice->Write(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET, reg);
+        }
+    }
+
+    void AxiDma::XAxiDmaIntrEnable(Direction direction, std::uint32_t mask)
+    {
+        if (direction == Direction::MM2S)
+        {
+            auto reg = m_UioDevice->Read(m_TxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET);
+            reg |= (mask & XAXIDMA_IRQ_ALL_MASK);
+            m_UioDevice->Write(m_TxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET, reg);
+        }
+        else if (direction == Direction::S2MM)
+        {
+            auto reg = m_UioDevice->Read(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET);
+            reg |= (mask & XAXIDMA_IRQ_ALL_MASK);
+            m_UioDevice->Write(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET, reg);
+        }
+    }
+
+    std::uint32_t AxiDma::XAxiDmaIntrGetIrq(Direction direction)
+    {
+        if (direction == Direction::MM2S)
+        {
+            return m_UioDevice->Read(m_TxBdRing.m_ChanBaseOffset + XAXIDMA_SR_OFFSET) & XAXIDMA_IRQ_ALL_MASK;
+        }
+        else if (direction == Direction::S2MM)
+        {
+            return m_UioDevice->Read(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_SR_OFFSET) & XAXIDMA_IRQ_ALL_MASK;
+        }
+    }
+
+    bool AxiDma::XAxiDmaSimpleTransfer(Direction direction, std::uint64_t buffer_address, std::uint32_t length)
+    {
+        std::uint32_t word;
+
+        if (m_Config.HasScatterGather)
+        {
+            SPDLOG_ERROR("Simple transfer is not supported in Scatter-Gather mode.");
+            return false;
+        }
+
+        if (direction == Direction::MM2S)
+        {
+            if (length > m_TxBdRing.m_MaxTransferLen)
+            {
+                SPDLOG_ERROR("Transfer length {} exceeds maximum allowed length {} for MM2S.", length, m_TxBdRing.m_MaxTransferLen);
+                return false;
+            }
+
+            if (!m_Config.HasMm2s)
+            {
+                SPDLOG_ERROR("Simple transfer is not supported for MM2S.");
+                return false;
+            }
+            /* If the engine is doing transfer, cannot submit */
+            if (!(m_UioDevice->Read(m_TxBdRing.m_ChanBaseOffset + XAXIDMA_SR_OFFSET) & XAXIDMA_HALTED_MASK))
+            {
+                if (XAxiDmaBusy(direction))
+                {
+                    SPDLOG_ERROR("DMA MM2S engine is currently running. Cannot submit new transfer.");
+                    return false;
+                }
+            }
+
+            if (!m_Config.MicroDmaChannel)
+            {
+                word = static_cast<uint32_t>((m_TxBdRing.m_DataWidth) - 1);
+            }
+            else
+            {
+                word = XAXIDMA_MICROMODE_MIN_BUF_ALIGN;
+            }
+
+            if ((buffer_address & word) != 0)
+            {
+                if (!m_Config.HasMm2sDRE)
+                {
+                    SPDLOG_ERROR("Unaligned transfer without DRE %x\r\n", buffer_address);
+                    return false;
+                }
+            }
+        }
+        else if (direction == Direction::S2MM)
+        {
+            if (length > m_RxBdRing.m_MaxTransferLen)
+            {
+                SPDLOG_ERROR("Transfer length {} exceeds maximum allowed length {} for S2MM.", length, m_RxBdRing.m_MaxTransferLen);
+                return false;
+            }
+
+            if (!m_Config.HasS2mm)
+            {
+                SPDLOG_ERROR("Simple transfer is not supported for S2MM.");
+                return false;
+            }
+            /* If the engine is doing transfer, cannot submit */
+            if (!(m_UioDevice->Read(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_SR_OFFSET) & XAXIDMA_HALTED_MASK))
+            {
+                if (XAxiDmaBusy(direction))
+                {
+                    SPDLOG_ERROR("DMA S2MM engine is currently running. Cannot submit new transfer.");
+                    return false;
+                }
+            }
+
+            if (!m_Config.MicroDmaChannel)
+            {
+                word = static_cast<uint32_t>((m_RxBdRing.m_DataWidth) - 1);
+            }
+            else
+            {
+                word = XAXIDMA_MICROMODE_MIN_BUF_ALIGN;
+            }
+
+            if ((buffer_address & word) != 0)
+            {
+                if (!m_Config.HasS2mmDRE)
+                {
+                    SPDLOG_ERROR("Unaligned transfer without DRE %x\r\n", buffer_address);
+                    return false;
+                }
+            }
+        }
+
+        XAxiDmaSetBufferAddress(direction, buffer_address);
+        XAxiDmaStart(direction, true);
+        XAxiDmaLength(direction, length);
+
+        return true;
+    }
+
+    bool AxiDma::XAxiDmaBusy(Direction direction)
+    {
+        if (direction == Direction::MM2S)
+        {
+            return (m_UioDevice->Read(m_TxBdRing.m_ChanBaseOffset + XAXIDMA_SR_OFFSET) & XAXIDMA_IDLE_MASK) ? false : true;
+        }
+        else if (direction == Direction::S2MM)
+        {
+            return (m_UioDevice->Read(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_SR_OFFSET) & XAXIDMA_IDLE_MASK) ? false : true;
+        }
+    }
+
+    AxiDma::StatusBits AxiDma::XAxiDmaStatusRead(Direction direction)
+    {
+        std::uint32_t status_reg;
+        if (direction == Direction::MM2S)
+        {
+            status_reg = m_UioDevice->Read(m_TxBdRing.m_ChanBaseOffset + XAXIDMA_SR_OFFSET);
+        }
+        else if (direction == Direction::S2MM)
+        {
+            status_reg = m_UioDevice->Read(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_SR_OFFSET);
+        }
+
+        StatusBits status;
+        status.halted = status_reg & 0x1;
+        status.idle = (status_reg >> 1) & 0x1;
+        status.sg_included = (status_reg >> 3) & 0x1;
+        status.dma_internal_error = (status_reg >> 4) & 0x1;
+        status.dma_slave_error = (status_reg >> 5) & 0x1;
+        status.dma_decode_error = (status_reg >> 6) & 0x1;
+        status.sg_internal_error = (status_reg >> 8) & 0x1;
+        status.sg_slave_error = (status_reg >> 9) & 0x1;
+        status.sg_decode_error = (status_reg >> 10) & 0x1;
+        status.ioc_irq = (status_reg >> 12) & 0x1;
+        status.dly_irq = (status_reg >> 13) & 0x1;
+        status.err_irq = (status_reg >> 14) & 0x1;
+        status.irq_threshold_sts = (status_reg >> 16) & 0xFF;
+        status.irq_delay_sts = (status_reg >> 24) & 0xFF;
+
+        return status;
+    }
+
+    AxiDma::ControlBits AxiDma::XAxiDmaControlRead(Direction direction)
+    {
+        std::uint32_t control_reg;
+        if (direction == Direction::MM2S)
+        {
+            control_reg = m_UioDevice->Read(m_TxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET);
+        }
+        else if (direction == Direction::S2MM)
+        {
+            control_reg = m_UioDevice->Read(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET);
+        }
+
+        ControlBits control;
+        control.rs = control_reg & 0x1;
+        control.reset = (control_reg >> 2) & 0x1;
+        control.keyhole = (control_reg >> 3) & 0x1;
+        control.cyclic_bd_enable = (control_reg >> 4) & 0x1;
+        control.ioc_irq_enable = (control_reg >> 12) & 0x1;
+        control.dly_irq_enable = (control_reg >> 13) & 0x1;
+        control.err_irq_enable = (control_reg >> 14) & 0x1;
+        control.irq_threshold = (control_reg >> 16) & 0xFF;
+        control.irq_delay = (control_reg >> 24) & 0xFF;
+
+        return control;
+    }
+
+    void AxiDma::XAxiDmaReset()
+    {
+        if (m_Config.HasMm2s)
+        {
+
+            /* Save the locations of current BDs both rings are working on
+             * before the reset so later we can resume the rings smoothly.
+             */
+            if (m_Config.HasScatterGather)
+            {
+                m_TxBdRing.XAxiDmaBdRingSnapShotCurrBd();
+                m_RxBdRing.XAxiDmaBdRingSnapShotCurrBd();
+            }
+        }
+
+        // Reset MM2S
+        if (m_Config.HasMm2s)
+        {
+            m_UioDevice->Write(m_TxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET, XAXIDMA_CR_RESET_MASK);
+            m_TxBdRing.m_RunState = XAxiDmaBdRing::AXIDMA_CHANNEL_HALTED;
+        }
+
+        // Reset S2MM
+        if (m_Config.HasS2mm)
+        {
+            m_UioDevice->Write(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET, XAXIDMA_CR_RESET_MASK);
+            m_RxBdRing.m_RunState = XAxiDmaBdRing::AXIDMA_CHANNEL_HALTED;
+        }
+    }
+
+    bool AxiDma::XAxiDmaResetIsDone()
+    {
+        if (m_Config.HasMm2s)
+        {
+            auto reg_value = m_UioDevice->Read(m_TxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET);
+            /* Reset is done when the reset bit is low */
+            if (reg_value & XAXIDMA_CR_RESET_MASK)
+            {
+                return false;
+            }
+        }
+
+        if (m_Config.HasS2mm)
+        {
+            auto reg_value = m_UioDevice->Read(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET);
+            /* Reset is done when the reset bit is low */
+            if (reg_value & XAXIDMA_CR_RESET_MASK)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void AxiDma::XAxiDmaStart(Direction direction, bool start)
+    {
+        if (direction == Direction::MM2S)
+        {
+            uint32_t control_reg = m_UioDevice->Read(m_TxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET);
+            if (start)
+            {
+                control_reg |= XAXIDMA_CR_RUNSTOP_MASK; // Set the run/stop bit
+            }
+            else
+            {
+                control_reg &= ~XAXIDMA_CR_RUNSTOP_MASK; // Clear the run/stop bit
+            }
+            m_UioDevice->Write(m_TxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET, control_reg);
+        }
+
+        else if (direction == Direction::S2MM)
+        {
+            uint32_t control_reg = m_UioDevice->Read(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET);
+            if (start)
+            {
+                control_reg |= XAXIDMA_CR_RUNSTOP_MASK; // Set the run/stop bit
+            }
+            else
+            {
+                control_reg &= ~XAXIDMA_CR_RUNSTOP_MASK; // Clear the run/stop bit
+            }
+            m_UioDevice->Write(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET, control_reg);
+        }
+    }
+
+    void AxiDma::XAxiDmaSetBufferAddress(Direction direction, std::uint64_t buffer_address)
+    {
+        if (direction == Direction::MM2S)
+        {
+            m_UioDevice->Write(m_TxBdRing.m_ChanBaseOffset + XAXIDMA_SRCADDR_OFFSET, static_cast<uint32_t>(buffer_address & 0xFFFFFFFF));
+            if (m_Config.AddressWidth > 32)
+            {
+                m_UioDevice->Write(m_TxBdRing.m_ChanBaseOffset + XAXIDMA_SRCADDR_MSB_OFFSET, static_cast<uint32_t>((buffer_address >> 32) & 0xFFFFFFFF));
+            }
+        }
+        else if (direction == Direction::S2MM)
+        {
+            m_UioDevice->Write(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_DESTADDR_OFFSET, static_cast<uint32_t>(buffer_address & 0xFFFFFFFF));
+            if (m_Config.AddressWidth > 32)
+            {
+                m_UioDevice->Write(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_DESTADDR_MSB_OFFSET, static_cast<uint32_t>((buffer_address >> 32) & 0xFFFFFFFF));
+            }
+        }
+    }
+
+    void AxiDma::XAxiDmaLength(Direction direction, uint32_t length)
+    {
+        if (direction == Direction::MM2S)
+        {
+            m_UioDevice->Write(m_TxBdRing.m_ChanBaseOffset + XAXIDMA_BUFFLEN_OFFSET, length);
+        }
+        else if (direction == Direction::S2MM)
+        {
+            m_UioDevice->Write(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_BUFFLEN_OFFSET, length);
+        }
+    }
+
+    void AxiDma::XAxiDmaWaitSync(Direction direction)
+    {
+        StatusBits status = XAxiDmaStatusRead(direction);
         while (!status.idle)
         {
             if (status.dma_internal_error || status.dma_slave_error || status.dma_decode_error)
@@ -206,87 +500,77 @@ namespace Dma
                 SPDLOG_ERROR("MM2S encountered an error during transfer");
                 break;
             }
-            status = ReadMm2sStatus();
+            status = XAxiDmaStatusRead(direction);
         }
         SPDLOG_DEBUG("MM2S Transfer complete");
     }
 
-    void AxiDma::ClearAllInterruptsS2mm()
+    void AxiDma::XAxiDmaClearInterrupts(Direction direction)
     {
-        auto reg_value = m_UioDevice->Read(S2MM_STATUS_REGISTER);
-        reg_value |= (1u << 12) | (1u << 13) | (1u << 14);
-        m_UioDevice->Write(S2MM_STATUS_REGISTER, reg_value);
-        SPDLOG_DEBUG("S2MM all interrupts cleared");
+        auto reg_addr = direction == Direction::MM2S ? m_TxBdRing.m_ChanBaseOffset + XAXIDMA_SR_OFFSET
+                                                     : m_RxBdRing.m_ChanBaseOffset + XAXIDMA_SR_OFFSET;
+
+        auto reg_value = m_UioDevice->Read(reg_addr);
+        reg_value |= XAXIDMA_IRQ_ALL_MASK;
+        m_UioDevice->Write(reg_addr, reg_value);
     }
 
-    void AxiDma::ClearAllInterruptsMm2s()
+    void AxiDma::AttachInterruptHandler(Direction direction, const std::function<void()> &callback, bool queue_enabled)
     {
-        auto reg_value = m_UioDevice->Read(MM2S_STATUS_REGISTER);
-        reg_value |= (1u << 12) | (1u << 13) | (1u << 14);
-        m_UioDevice->Write(MM2S_STATUS_REGISTER, reg_value);
-        SPDLOG_DEBUG("MM2S all interrupts cleared");
+
+        if (direction == Direction::MM2S)
+        {
+            m_Mm2sCallback = callback;
+            // m_UioDevice->InterruptAttach([this]()
+            //                              { OnMm2sInterrupt(); },
+            //                              queue_enabled);
+        }
+        else if (direction == Direction::S2MM)
+        {
+            m_S2mmCallback = callback;
+            m_UioDevice->InterruptAttach([this]()
+                                         { OnS2mmInterrupt(); },
+                                         queue_enabled);
+        }
     }
 
-    void AxiDma::StartS2mm(uint64_t address, uint32_t length)
-    {
-        ResetS2mm();
-        HaltS2mm();
-        SetDestinationAddress(address);
-        SetAllInterruptsMaskedS2mm();
-        SetS2mmLength(length);
-        WaitS2mmSync();
-        SPDLOG_DEBUG("S2MM prepared with address 0x{:08X}{:08X} and length {}", static_cast<uint32_t>((address >> 32) & 0xFFFFFFFF), static_cast<uint32_t>(address & 0xFFFFFFFF), length);
-    }
-
-    void AxiDma::StartMm2s(uint64_t address, uint32_t length)
-    {
-        ResetMm2s();
-        HaltMm2s();
-        SetSourceAddress(address);
-        SetAllInterruptsMaskedMm2s();
-        SetMm2sLength(length);
-        WaitMm2sSync();
-        SPDLOG_DEBUG("MM2S prepared with address 0x{:08X}{:08X} and length {}", static_cast<uint32_t>((address >> 32) & 0xFFFFFFFF), static_cast<uint32_t>(address & 0xFFFFFFFF), length);
-    }
-
-    void AxiDma::AttachS2mmInterruptHandler(const std::function<void()> &callback, bool queue_enabled)
-    {
-        m_S2mmCallback = callback;
-        m_UioDevice->InterruptAttach([this]()
-                                     { OnInterruptS2mm(); },
-                                     queue_enabled);
-    }
-
-    void AxiDma::DetachS2mmInterruptHandler()
+    void AxiDma::DetachInterruptHandler()
     {
         m_UioDevice->InterruptDetach();
         m_S2mmCallback = nullptr;
+        m_Mm2sCallback = nullptr;
     }
 
-    void AxiDma::OnInterruptS2mm()
+    void AxiDma::OnS2mmInterrupt()
     {
-        auto s2mm_status = ReadS2mmStatus();
+        auto status = XAxiDmaStatusRead(Direction::S2MM);
 
-        if (m_S2mmCallback)
+        if (status.ioc_irq || status.err_irq || status.dly_irq)
         {
-            m_S2mmCallback();
-        }
+            XAxiDmaClearInterrupts(Direction::S2MM);
 
-        if (s2mm_status.ioc_irq || s2mm_status.err_irq || s2mm_status.dly_irq)
-        {
-            ClearAllInterruptsS2mm();
-        }
+            if (status.err_irq)
+            {
+                SPDLOG_ERROR("S2MM DMA Error interrupt - Details:");
+                SPDLOG_ERROR("  DMA Internal Error: {}", status.dma_internal_error);
+                SPDLOG_ERROR("  DMA Slave Error: {}", status.dma_slave_error);
+                SPDLOG_ERROR("  DMA Decode Error: {}", status.dma_decode_error);
+                XAxiDmaPrintStatus(Direction::S2MM);
+                return;
+            }
 
-        if (m_S2mmCallback)
-        {
-            m_S2mmCallback();
+            if (m_S2mmCallback)
+            {
+                m_S2mmCallback();
+            }
         }
     }
 
-    void AxiDma::PrintMm2sStatus()
+    void AxiDma::XAxiDmaPrintStatus(Direction direction)
+
     {
-        StatusBits status = ReadMm2sStatus();
-        SPDLOG_DEBUG("MM2S Status:");
+        StatusBits status = XAxiDmaStatusRead(direction);
+        SPDLOG_DEBUG("{} Status:", direction == Direction::MM2S ? "MM2S" : "S2MM");
         SPDLOG_DEBUG("  halted={}", status.halted);
         SPDLOG_DEBUG("  idle={}", status.idle);
         SPDLOG_DEBUG("  sg_included={}", status.sg_included);
@@ -303,45 +587,10 @@ namespace Dma
         SPDLOG_DEBUG("  irq_delay_sts={}", status.irq_delay_sts);
     }
 
-    void AxiDma::PrintS2mmStatus()
+    void AxiDma::XAxiDmaPrintControl(Direction direction)
     {
-        StatusBits status = ReadS2mmStatus();
-        SPDLOG_DEBUG("S2MM Status:");
-        SPDLOG_DEBUG("  halted={}", status.halted);
-        SPDLOG_DEBUG("  idle={}", status.idle);
-        SPDLOG_DEBUG("  sg_included={}", status.sg_included);
-        SPDLOG_DEBUG("  dma_internal_error={}", status.dma_internal_error);
-        SPDLOG_DEBUG("  dma_slave_error={}", status.dma_slave_error);
-        SPDLOG_DEBUG("  dma_decode_error={}", status.dma_decode_error);
-        SPDLOG_DEBUG("  sg_internal_error={}", status.sg_internal_error);
-        SPDLOG_DEBUG("  sg_slave_error={}", status.sg_slave_error);
-        SPDLOG_DEBUG("  sg_decode_error={}", status.sg_decode_error);
-        SPDLOG_DEBUG("  ioc_irq={}", status.ioc_irq);
-        SPDLOG_DEBUG("  dly_irq={}", status.dly_irq);
-        SPDLOG_DEBUG("  err_irq={}", status.err_irq);
-        SPDLOG_DEBUG("  irq_threshold_sts={}", status.irq_threshold_sts);
-        SPDLOG_DEBUG("  irq_delay_sts={}", status.irq_delay_sts);
-    }
-
-    void AxiDma::PrintMm2sControl()
-    {
-        ControlBits control_reg = ReadMm2sControl();
-        SPDLOG_DEBUG("MM2S Control Register Bits:");
-        SPDLOG_DEBUG("  rs={}", control_reg.rs);
-        SPDLOG_DEBUG("  reset={}", control_reg.reset);
-        SPDLOG_DEBUG("  keyhole={}", control_reg.keyhole);
-        SPDLOG_DEBUG("  cyclic_bd_enable={}", control_reg.cyclic_bd_enable);
-        SPDLOG_DEBUG("  ioc_irq_enable={}", control_reg.ioc_irq_enable);
-        SPDLOG_DEBUG("  dly_irq_enable={}", control_reg.dly_irq_enable);
-        SPDLOG_DEBUG("  err_irq_enable={}", control_reg.err_irq_enable);
-        SPDLOG_DEBUG("  irq_threshold={}", control_reg.irq_threshold);
-        SPDLOG_DEBUG("  irq_delay={}", control_reg.irq_delay);
-    }
-
-    void AxiDma::PrintS2mmControl()
-    {
-        ControlBits control_reg = ReadS2mmControl();
-        SPDLOG_DEBUG("S2MM Control Register Bits:");
+        ControlBits control_reg = XAxiDmaControlRead(direction);
+        SPDLOG_DEBUG("{} Control Register Bits:", direction == Direction::MM2S ? "MM2S" : "S2MM");
         SPDLOG_DEBUG("  rs={}", control_reg.rs);
         SPDLOG_DEBUG("  reset={}", control_reg.reset);
         SPDLOG_DEBUG("  keyhole={}", control_reg.keyhole);
@@ -355,9 +604,98 @@ namespace Dma
 
     void AxiDma::Stop()
     {
-        HaltMm2s();
-        HaltS2mm();
-        SPDLOG_DEBUG("AxiDma MM2S and S2MM channels stopped");
+        if (m_Config.HasMm2s)
+        {
+            XAxiDmaStart(Direction::MM2S, false);
+            int timeout = 1000;
+            while (timeout-- && XAxiDmaBusy(Direction::MM2S))
+            {
+                std::this_thread::sleep_for(std::chrono::microseconds(10));
+            }
+
+            XAxiDmaClearInterrupts(Direction::MM2S);
+            XAxiDmaIntrDisable(Direction::MM2S, XAXIDMA_IRQ_ALL_MASK);
+        }
+
+        if (m_Config.HasS2mm)
+        {
+            XAxiDmaStart(Direction::S2MM, false);
+            int timeout = 1000;
+            while (timeout-- && XAxiDmaBusy(Direction::S2MM))
+            {
+                std::this_thread::sleep_for(std::chrono::microseconds(10));
+            }
+            XAxiDmaClearInterrupts(Direction::S2MM);
+            XAxiDmaIntrDisable(Direction::S2MM, XAXIDMA_IRQ_ALL_MASK);
+        }
+    }
+
+    bool AxiDma::XAxiDmaSelectCyclicMode(Direction direction, bool enable)
+    {
+        uint32_t control_reg{0};
+
+        if (direction == Direction::MM2S)
+        {
+            control_reg = m_UioDevice->Read(m_TxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET);
+        }
+        else
+        {
+            control_reg = m_UioDevice->Read(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET);
+        }
+
+        if (enable)
+        {
+            control_reg |= XAXIDMA_CR_CYCLIC_MASK;
+        }
+        else
+        {
+            control_reg &= ~XAXIDMA_CR_CYCLIC_MASK;
+        }
+
+        if (direction == Direction::MM2S)
+        {
+            m_UioDevice->Write(m_TxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET, control_reg);
+        }
+        else
+        {
+            m_UioDevice->Write(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET, control_reg);
+        }
+
+        return true;
+    }
+
+    bool AxiDma::XAxiDmaSelectKeyHoleMode(Direction direction, bool enable)
+    {
+        uint32_t control_reg{0};
+
+        if (direction == Direction::MM2S)
+        {
+            control_reg = m_UioDevice->Read(m_TxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET);
+        }
+        else
+        {
+            control_reg = m_UioDevice->Read(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET);
+        }
+
+        if (enable)
+        {
+            control_reg |= XAXIDMA_CR_KEYHOLE_MASK;
+        }
+        else
+        {
+            control_reg &= ~XAXIDMA_CR_KEYHOLE_MASK;
+        }
+
+        if (direction == Direction::MM2S)
+        {
+            m_UioDevice->Write(m_TxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET, control_reg);
+        }
+        else
+        {
+            m_UioDevice->Write(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET, control_reg);
+        }
+
+        return true;
     }
 
 } // namespace Dma

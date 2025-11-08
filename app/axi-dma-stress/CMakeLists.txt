@@ -19,6 +19,9 @@ set(SOURCES
     DmaBuffer/UDmaBufferAllocate.cpp
     AxiDataGen/AxiDataGen.cpp
     AxiDma/AxiDma.cpp
+    AxiDma/AxiDmaBd.cpp
+    AxiDma/AxiDmaBdRing.cpp
+    AxiTrafficGen/AxiTrafficGen.cpp
     UIO/Uio.cpp
     main.cpp
 )
@@ -33,6 +36,7 @@ target_include_directories(${PROJECT_NAME}
         Utilities/
         DmaBuffer/
         AxiDataGen/
+        AxiTrafficGen/
         AxiDma/
         UIO/
 )
