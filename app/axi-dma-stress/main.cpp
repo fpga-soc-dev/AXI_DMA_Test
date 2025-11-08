@@ -15,11 +15,10 @@ void TestAxiDmaSimpleSingleChannel()
     std::vector<std::vector<int>> results;
 
     AxiDataGen dataGen("data-generator-dma-simple");
+    dataGen.SetConfig(TEST_SAMPLE_COUNT, TEST_FRAME_INTERVAL_US);
 
     Dma::UDmaBuffer dmaBuffer(1, dataGen.GetFrameSize(), Dma::UDmaBuffer::CachePolicy::Cached);
     Dma::AxiDma axiDma("axi-dma-simple", Dma::AxiDma::Config{});
-
-    dataGen.Start(TEST_SAMPLE_COUNT, TEST_FRAME_INTERVAL_US);
 
     std::atomic<bool> test_running{true};
     std::atomic<int> interrupt_count{0};
@@ -29,31 +28,32 @@ void TestAxiDmaSimpleSingleChannel()
 
     axiDma.AttachInterruptHandler(Dma::AxiDma::Direction::S2MM, [&]()
                                   {
-                    if (!test_running.load())
-                        return;
-
-
-                    dmaBuffer.InvalidateCache(buf_name);
-                    std::byte *data_ptr = dmaBuffer.BufferPtr(buf_name);
-                    std::uint32_t *frame_data = reinterpret_cast<uint32_t *>(data_ptr);
-                    size_t frame_size_words = dmaBuffer.GetBufferSize(buf_name) / sizeof(std::uint32_t);
-                    
-                    std::vector<int> current_frame;
-                    current_frame.reserve(frame_size_words);
-
-                    for (size_t i = 0; i < frame_size_words; ++i) {
-                        current_frame.push_back(static_cast<int>(frame_data[i]));
-                    }
-    
-                    results.push_back(std::move(current_frame));
-
-                    interrupt_count++;
-
-                    axiDma.XAxiDmaSimpleTransfer(Dma::AxiDma::Direction::S2MM, dmaBuffer.GetPhysicalAddress("udmabuf0"), dmaBuffer.GetBufferSize("udmabuf0")); }, false);
+        if (!test_running.load())
+        return;
+        
+        
+        dmaBuffer.InvalidateCache(buf_name);
+        std::byte *data_ptr = dmaBuffer.BufferPtr(buf_name);
+        std::uint32_t *frame_data = reinterpret_cast<uint32_t *>(data_ptr);
+        size_t frame_size_words = dmaBuffer.GetBufferSize(buf_name) / sizeof(std::uint32_t);
+        
+        std::vector<int> current_frame;
+        current_frame.reserve(frame_size_words);
+        
+        for (size_t i = 0; i < frame_size_words; ++i) {
+            current_frame.push_back(static_cast<int>(frame_data[i]));
+        }
+        
+        results.push_back(std::move(current_frame));
+        
+        interrupt_count++;
+        
+        axiDma.XAxiDmaSimpleTransfer(Dma::AxiDma::Direction::S2MM, dmaBuffer.GetPhysicalAddress("udmabuf0"), dmaBuffer.GetBufferSize("udmabuf0")); }, false);
 
     SPDLOG_INFO("Starting 10-second test with single frame transfers...");
 
     axiDma.XAxiDmaSimpleTransfer(Dma::AxiDma::Direction::S2MM, dmaBuffer.GetPhysicalAddress("udmabuf0"), dmaBuffer.GetBufferSize("udmabuf0"));
+    dataGen.Start();
 
     std::this_thread::sleep_for(std::chrono::seconds(10));
 

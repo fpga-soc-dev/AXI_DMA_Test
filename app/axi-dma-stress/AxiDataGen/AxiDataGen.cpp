@@ -16,7 +16,33 @@ uint32_t AxiDataGen::ReadVersion()
     return m_UioDevice->Read(VERSION);
 }
 
-void AxiDataGen::Start(uint32_t frame_samples, uint32_t interval_us)
+void AxiDataGen::SetConfig(uint32_t frame_samples, uint32_t frame_period)
+{
+
+    uint32_t desired_interval_us = frame_period;
+    uint32_t calculated_period = ComputeSamplePeriod(desired_interval_us,
+                                                     DATA_GENERATOR_FREQ,
+                                                     frame_samples);
+
+    SPDLOG_INFO("Configuring for {} samples per frame and calculated clock cycles per data word {} for {} us frame period", m_FrameSamples, calculated_period + 1, desired_interval_us);
+
+    m_UioDevice->Write(SAMPLE_PERIOD, calculated_period);
+    if (m_UioDevice->Read(SAMPLE_PERIOD) != calculated_period)
+    {
+        SPDLOG_WARN("SAMPLE_PERIOD register mismatch after write");
+    }
+
+    m_FramePeriod = calculated_period;
+
+    m_UioDevice->Write(FRAME_SAMPLES, frame_samples);
+    if (m_UioDevice->Read(FRAME_SAMPLES) != frame_samples)
+    {
+        SPDLOG_WARN("FRAME_SAMPLES register mismatch after write {}", frame_samples);
+    }
+    m_FrameSamples = frame_samples;
+}
+
+void AxiDataGen::Start()
 {
     auto version = ReadVersion();
     if (version != 0x0000DEAD)
@@ -29,25 +55,6 @@ void AxiDataGen::Start(uint32_t frame_samples, uint32_t interval_us)
     ClearInterruptCount();
     ClearAverageInterval();
     SoftReset();
-
-    uint32_t desired_interval_us = interval_us;
-    uint32_t calculated_period = ComputeSamplePeriod(desired_interval_us,
-                                                     DATA_GENERATOR_FREQ,
-                                                     frame_samples);
-
-    SPDLOG_INFO("Configuring for {} samples per frame and calculated clock cycles per data word {} for {} us frame period", frame_samples, calculated_period + 1, desired_interval_us);
-
-    m_UioDevice->Write(SAMPLE_PERIOD, calculated_period);
-    if (m_UioDevice->Read(SAMPLE_PERIOD) != calculated_period)
-    {
-        SPDLOG_WARN("SAMPLE_PERIOD register mismatch after write");
-    }
-
-    m_UioDevice->Write(FRAME_SAMPLES, frame_samples);
-    if (m_UioDevice->Read(FRAME_SAMPLES) != frame_samples)
-    {
-        SPDLOG_WARN("FRAME_SAMPLES register mismatch after write {}", frame_samples);
-    }
 
     m_UioDevice->Write(FRAME_ID, 0x0);
     if (m_UioDevice->Read(FRAME_ID) != 0x0)

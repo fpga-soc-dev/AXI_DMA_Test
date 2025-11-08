@@ -37,7 +37,8 @@ public:
     ~AxiDataGen();
 
     uint32_t ReadVersion();
-    void Start(uint32_t frame_samples, uint32_t interval_us);
+    void Start();
+    void SetConfig(uint32_t frame_samples, uint32_t frame_period);
     uint32_t GetFrameSize();
     uint32_t GetBackPressureCount();
     uint32_t GetInterruptCount();
@@ -50,6 +51,8 @@ public:
 
 private:
     std::unique_ptr<UIO> m_UioDevice;
+    uint32_t m_FrameSamples;
+    uint32_t m_FramePeriod;
 
     uint32_t ComputeSamplePeriod(uint32_t interval_us, uint32_t axi_clock_freq, uint32_t frame_samples);
     void SoftReset();
