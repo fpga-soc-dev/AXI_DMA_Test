@@ -61,7 +61,7 @@ architecture rtl of DataGenerator is
     -- 0x08 FRAME_SAMPLES
     -- 0x0C FRAME_ID      (R/W current frame counter start)
     -- 0x10 STATUS        [0]=RUNNING [1]=BP_SEEN [2]=INTERVAL_DONE [31:16]=BP_COUNT
-    -- 0x14 STATUS_CLR    [1]=CLR_BP [2]=CLR_INTERVAL_DONE [3]=CLR_IRQ_COUNT
+    -- 0x14 STATUS_CLR    [1]=CLR_BP [2]=CLR_INTERVAL_DONE [3]=CLR_IRQ_COUNT [4]=CLR_AVG_INTERVAL
     -- 0x18 VERSION       (R/O) 0x0000DEAD
     -- 0x1C INTERVAL_RESULT (R/O) holds the measured interrupt interval
     -- 0x20 IRQ_COUNT      (R/O) free-running counter of received interrupts
@@ -398,7 +398,7 @@ begin
                 vdata := VERSION_CONST;
 
             when "0111" => -- 0x1C INTERVAL_RESULT
-                vdata := interval_result_reg;
+                vdata := avg_interval_reg;
 
             when "1000" => -- 0x20 IRQ_COUNT
                 vdata := std_logic_vector(irq_count_reg);
@@ -438,7 +438,6 @@ begin
 
                 avg_accumulator  <= (others => '0');
                 avg_sample_count <= (others => '0');
-                avg_interval_reg <= (others => '0');
             else
                 dma_introut_d1  <= dma_introut_synced;
                 irq_rising_edge <= (not dma_introut_d1) and dma_introut_synced;
@@ -450,7 +449,6 @@ begin
                 if clr_avg_interval = '1' then
                     avg_accumulator  <= (others => '0');
                     avg_sample_count <= (others => '0');
-                    avg_interval_reg <= (others => '0');
                     measure_fsm      <= IDLE;
                 end if;
 
@@ -472,6 +470,8 @@ begin
                         end if;
 
                     when TIMING =>
+                        interval_counter_reg <= interval_counter_reg + 1;
+
                         -- Wait for the *second* interrupt
                         if irq_rising_edge = '1' then
                             interval_result_reg <= std_logic_vector(interval_counter_reg + 1);
@@ -479,16 +479,23 @@ begin
 
                             avg_accumulator  <= avg_accumulator + (interval_counter_reg + 1);
                             avg_sample_count <= avg_sample_count + 1;
-                            if avg_sample_count > 0 then
-                                interval_result_reg <= std_logic_vector(avg_accumulator(47 downto 16) / avg_sample_count);
-                            end if;
-
-                            measure_fsm <= ARMED;
-                        else
-                            interval_counter_reg <= interval_counter_reg + 1;
+                            measure_fsm      <= ARMED;
                         end if;
 
                 end case;
+            end if;
+        end if;
+    end process;
+
+    avg_calc_proc : process (s_axi_aclk)
+    begin
+        if rising_edge(s_axi_aclk) then
+            if s_axi_aresetn = '0' or clr_avg_interval = '1' then
+                avg_interval_reg <= (others => '0');
+            elsif (measure_fsm = TIMING) and (irq_rising_edge = '1') and (avg_sample_count > 0) then
+                -- Calculate average after accumulator is updated
+                -- Use full 64-bit accumulator divided by sample count
+                avg_interval_reg <= std_logic_vector(resize(avg_accumulator / resize(avg_sample_count, 64), 32));
             end if;
         end if;
     end process;

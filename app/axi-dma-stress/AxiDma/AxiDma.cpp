@@ -176,6 +176,19 @@ namespace Dma
         }
     }
 
+    bool AxiDma::XAxiDmaIsStarted(Direction direction)
+    {
+        if (direction == Direction::MM2S)
+        {
+            return !(m_UioDevice->Read(m_TxBdRing.m_ChanBaseOffset + XAXIDMA_SR_OFFSET) & XAXIDMA_HALTED_MASK);
+        }
+        else if (direction == Direction::S2MM)
+        {
+            return !(m_UioDevice->Read(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_SR_OFFSET) & XAXIDMA_HALTED_MASK);
+        }
+        return false;
+    }
+
     void AxiDma::XAxiDmaIntrEnable(Direction direction, std::uint32_t mask)
     {
         if (direction == Direction::MM2S)
@@ -693,6 +706,132 @@ namespace Dma
         else
         {
             m_UioDevice->Write(m_RxBdRing.m_ChanBaseOffset + XAXIDMA_CR_OFFSET, control_reg);
+        }
+
+        return true;
+    }
+
+    bool AxiDma::XAxiDmaCyclicTransfer(Direction direction, const UDmaBuffer &buffers)
+    {
+        auto bd_ring_buf_length = buffers.GetBufferSize("udmabuf0");
+        auto bdring_buf_phyaddr = buffers.GetPhysicalAddress("udmabuf0");
+        auto bdring_buf_virtaddr = reinterpret_cast<std::uintptr_t>(buffers.BufferPtr("udmabuf0"));
+
+        auto data_buffer_length = buffers.GetBufferSize("udmabuf1");
+        auto data_buffer_phyaddr = buffers.GetPhysicalAddress("udmabuf1");
+        auto data_buffer_virtaddr = reinterpret_cast<std::uintptr_t>(buffers.BufferPtr("udmabuf1"));
+
+        if (!m_Config.HasScatterGather)
+        {
+            SPDLOG_ERROR("Cyclic transfer is not supported in Scatter-Gather mode.");
+            return false;
+        }
+
+        if (direction == Direction::MM2S)
+        {
+        }
+        else if (direction == Direction::S2MM)
+        {
+            bool status;
+            XAxiDma_Bd bd_template;
+            XAxiDma_Bd *bd_ptr;
+            XAxiDma_Bd *bd_curr_ptr;
+            int bd_count;
+            int free_bd_count;
+            std::uintptr_t rx_buffer_address;
+
+            /* Disable all RX interrupts before RxBD space setup */
+            XAxiDmaIntrDisable(direction, XAXIDMA_IRQ_ALL_MASK);
+
+            /* Setup Rx BD space */
+            bd_count = m_RxBdRing.XAxiDmaBdRingCntCalc(XAXIDMA_BD_MINIMUM_ALIGNMENT, bd_ring_buf_length);
+            SPDLOG_DEBUG("Cyclic RX BD count calculated: {}", bd_count);
+
+            status = m_RxBdRing.XAxiDmaBdRingCreate(bdring_buf_phyaddr, bdring_buf_virtaddr, XAXIDMA_BD_MINIMUM_ALIGNMENT, bd_count);
+            if (!status)
+            {
+                SPDLOG_ERROR("Failed to create BD Ring for cyclic transfer.");
+                return false;
+            }
+
+            /*Setup a BD template for the Rx channel. Then copy it to every RX BD.*/
+            AxiDmaBd::XAxiDmaBdClear(reinterpret_cast<std::uintptr_t>(bd_template));
+
+            status = m_RxBdRing.XAxiDmaBdRingClone(&bd_template);
+            if (!status)
+            {
+                SPDLOG_ERROR("Rx bd clone failed.");
+                return false;
+            }
+
+            free_bd_count = m_RxBdRing.m_FreeCnt;
+            status = m_RxBdRing.XAxiDmaBdRingAlloc(free_bd_count, &bd_ptr);
+            if (!status)
+            {
+                SPDLOG_ERROR("Rx bd allocation failed.");
+                return false;
+            }
+
+            bd_curr_ptr = bd_ptr;
+            rx_buffer_address = data_buffer_phyaddr;
+
+            for (int index = 0; index < free_bd_count; ++index)
+            {
+                status = AxiDmaBd::XAxiDmaBdSetBufAddr(reinterpret_cast<std::uintptr_t>(bd_curr_ptr), rx_buffer_address);
+                if (!status)
+                {
+                    SPDLOG_ERROR("Rx set buffer address failed for buf_addr={:08x} bd_ptr={:08x} status={}",
+                                 (unsigned int)rx_buffer_address,
+                                 (uintptr_t)bd_curr_ptr, status);
+                    return false;
+                }
+
+                status = AxiDmaBd::XAxiDmaBdSetLength(reinterpret_cast<std::uintptr_t>(bd_curr_ptr), bd_ring_buf_length, m_RxBdRing.m_MaxTransferLen);
+                if (!status)
+                {
+                    SPDLOG_ERROR("Rx set length failed for length={} bd_ptr={:08x} status={}",
+                                 bd_ring_buf_length,
+                                 (uintptr_t)bd_curr_ptr, status);
+                    return false;
+                }
+
+                /* Receive BDs do not need to set anything for the control
+                 * The hardware will set the SOF/EOF bits per stream status
+                 */
+                AxiDmaBd::XAxiDmaBdSetCtrl(reinterpret_cast<std::uintptr_t>(bd_curr_ptr), 0);
+                AxiDmaBd::XAxiDmaBdSetId(reinterpret_cast<std::uintptr_t>(bd_curr_ptr), rx_buffer_address);
+
+                rx_buffer_address += data_buffer_length;
+                bd_curr_ptr = m_RxBdRing.XAxiDmaBdRingNext(reinterpret_cast<const XAxiDma_Bd *>(bd_curr_ptr));
+            }
+
+            status = m_RxBdRing.XAxiDmaBdRingSetCoalesce(16, 100);
+            if (!status)
+            {
+                SPDLOG_ERROR("Failed to set coalesce for Rx BD ring.");
+                return false;
+            }
+
+            status = m_RxBdRing.XAxiDmaBdRingToHw(free_bd_count, bd_ptr);
+            if (!status)
+            {
+                SPDLOG_ERROR("Failed to submit Rx BD ring to hardware.");
+                return false;
+            }
+
+            /* Enable all interrupts */
+            XAxiDmaIntrEnable(direction, XAXIDMA_IRQ_ALL_MASK);
+            /* Enable Cyclic DMA mode */
+            m_RxBdRing.m_Cyclic = true;
+            XAxiDmaSelectCyclicMode(direction, true);
+
+            /* Start RX DMA channel */
+            status = m_RxBdRing.XAxiDmaBdRingStart();
+            if (!status)
+            {
+                SPDLOG_ERROR("Failed to start Rx BD ring.");
+                return false;
+            }
         }
 
         return true;

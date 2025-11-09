@@ -4,6 +4,7 @@
 #include <string>
 #include "Uio.hpp"
 #include "AxiDmaBdRing.hpp"
+#include "UDmaBuffer.hpp"
 
 namespace Dma
 {
@@ -91,8 +92,10 @@ namespace Dma
         void XAxiDmaSetBufferAddress(Direction direction, std::uint64_t buffer_address);
         void XAxiDmaStart(Direction direction, bool start);
         void XAxiDmaLength(Direction direction, std::uint32_t length);
+        bool XAxiDmaIsStarted(Direction direction);
 
         bool XAxiDmaSimpleTransfer(Direction direction, std::uint64_t buffer_address, std::uint32_t length);
+        bool XAxiDmaCyclicTransfer(Direction direction, const UDmaBuffer &buffers);
 
         void XAxiDmaWaitSync(Direction direction);
 

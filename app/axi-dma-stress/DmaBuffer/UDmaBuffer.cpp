@@ -13,11 +13,11 @@
 namespace Dma
 {
 
-    UDmaBuffer::UDmaBuffer(uint8_t buffer_numbers, uint32_t size, CachePolicy cache_policy, uint8_t quirk_mmap_mode)
+    UDmaBuffer::UDmaBuffer(UDmaBufferAllocate::UdmaBufConfig buffer_vec, CachePolicy cache_policy, uint8_t quirk_mmap_mode)
         : m_Policy(cache_policy), m_BufferAllocator(std::make_unique<UDmaBufferAllocate>())
     {
 
-        if (!CreateBuffer(buffer_numbers, size, cache_policy, quirk_mmap_mode))
+        if (!CreateBuffer(buffer_vec, cache_policy, quirk_mmap_mode))
         {
             throw std::runtime_error("Failed to create DMA buffers");
         }
@@ -48,7 +48,7 @@ namespace Dma
             m_DeviceInfos[buf_name] = GetDeviceInfo(buf_name);
             m_SyncInfo[buf_name] = GetSyncInfo(buf_name);
 
-            auto result_ptr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+            auto result_ptr = mmap(nullptr, GetBufferSize(buf_name), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
             if (result_ptr == MAP_FAILED)
             {
                 throw std::runtime_error("Failed to mmap buffer " + buf_name);
@@ -79,12 +79,12 @@ namespace Dma
         }
     }
 
-    bool UDmaBuffer::CreateBuffer(uint8_t buffer_number, uint32_t size, CachePolicy cache_policy, uint8_t quirk_mmap_mode)
+    bool UDmaBuffer::CreateBuffer(UDmaBufferAllocate::UdmaBufConfig buffer_vec, CachePolicy cache_policy, uint8_t quirk_mmap_mode)
     {
         auto allocated_buffers = m_BufferAllocator->GetAllocatedBuffers();
         if (allocated_buffers.size() == 0)
         {
-            if (!m_BufferAllocator->AllocateBuffers(buffer_number, size, quirk_mmap_mode))
+            if (!m_BufferAllocator->AllocateBuffers(buffer_vec, quirk_mmap_mode))
             {
                 SPDLOG_ERROR("Failed to allocate DMA buffers");
                 return false;

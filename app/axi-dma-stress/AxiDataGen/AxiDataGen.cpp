@@ -24,7 +24,7 @@ void AxiDataGen::SetConfig(uint32_t frame_samples, uint32_t frame_period)
                                                      DATA_GENERATOR_FREQ,
                                                      frame_samples);
 
-    SPDLOG_INFO("Configuring for {} samples per frame and calculated clock cycles per data word {} for {} us frame period", m_FrameSamples, calculated_period + 1, desired_interval_us);
+    SPDLOG_INFO("Configuring for {} samples per frame and calculated clock cycles per data word {} for {} us frame period", frame_samples, calculated_period + 1, desired_interval_us);
 
     m_UioDevice->Write(SAMPLE_PERIOD, calculated_period);
     if (m_UioDevice->Read(SAMPLE_PERIOD) != calculated_period)

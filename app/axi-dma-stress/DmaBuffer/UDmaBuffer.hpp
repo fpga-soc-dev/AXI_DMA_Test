@@ -56,10 +56,10 @@ namespace Dma
             DMA_FROM_DEVICE = 2,
         };
 
-        UDmaBuffer(uint8_t buffer_number, uint32_t size, CachePolicy cache_policy, uint8_t quirk_mmap_mode = 2);
+        UDmaBuffer(UDmaBufferAllocate::UdmaBufConfig buffer_vec, CachePolicy cache_policy, uint8_t quirk_mmap_mode = 2);
         ~UDmaBuffer();
 
-        bool CreateBuffer(uint8_t buffer_number, uint32_t size, CachePolicy cache_policy, uint8_t quirk_mmap_mode = 2);
+        bool CreateBuffer(UDmaBufferAllocate::UdmaBufConfig buffer_vec, CachePolicy cache_policy, uint8_t quirk_mmap_mode = 2);
 
         DriverInfo GetDriverInfo(std::string buffer_name) const;
         DeviceInfo GetDeviceInfo(std::string buffer_name) const;
