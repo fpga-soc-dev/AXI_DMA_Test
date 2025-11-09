@@ -121,7 +121,7 @@ void TestAxiDmaCyclicSingleChannel()
         .BufferLengthRegister = 26};
 
     static constexpr uint32_t TEST_SAMPLE_COUNT = 4096u;
-    static constexpr uint32_t TEST_FRAME_INTERVAL_US = 500u;
+    static constexpr uint32_t TEST_FRAME_INTERVAL_US = 1000u;
 
     std::vector<std::vector<int>> results;
 
@@ -141,17 +141,20 @@ void TestAxiDmaCyclicSingleChannel()
     std::atomic<int> interrupt_count{0};
 
     auto buffer_names = dmaBuffer.GetAllocatedBuffers();
-    std::string buf_name = buffer_names[0];
+    std::string buf_name0 = buffer_names[0];
+    std::string buf_name1 = buffer_names[1];
 
     axiDma.AttachInterruptHandler(Dma::AxiDma::Direction::S2MM, [&]()
                                   {
         if (!test_running.load())
         return;
+        SPDLOG_DEBUG("DMA Interrupt received.");
         
-        
-        dmaBuffer.InvalidateCache(buf_name);
-        std::byte *data_ptr = dmaBuffer.BufferPtr(buf_name);
+        dmaBuffer.InvalidateCache(buf_name1);
+        std::byte *data_ptr = dmaBuffer.BufferPtr(buf_name1);
         std::uint32_t *frame_data = reinterpret_cast<uint32_t *>(data_ptr);
+        SPDLOG_DEBUG("framedata: {}, {}, {}, {},{},{},{}", frame_data[0], frame_data[1], frame_data[2], frame_data[3],frame_data[4095],frame_data[4096],frame_data[4097]);
+
     
         interrupt_count++; }, false);
 

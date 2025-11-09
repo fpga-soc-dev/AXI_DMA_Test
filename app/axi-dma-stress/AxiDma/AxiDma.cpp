@@ -711,7 +711,7 @@ namespace Dma
         return true;
     }
 
-    bool AxiDma::XAxiDmaCyclicTransfer(Direction direction, const UDmaBuffer &buffers)
+    bool AxiDma::XAxiDmaCyclicTransfer(Direction direction, UDmaBuffer &buffers)
     {
         auto bd_ring_buf_length = buffers.GetBufferSize("udmabuf0");
         auto bdring_buf_phyaddr = buffers.GetPhysicalAddress("udmabuf0");
@@ -723,7 +723,7 @@ namespace Dma
 
         if (!m_Config.HasScatterGather)
         {
-            SPDLOG_ERROR("Cyclic transfer is not supported in Scatter-Gather mode.");
+            SPDLOG_ERROR("Cyclic transfer is not supported in Simple mode.");
             return false;
         }
 
@@ -733,7 +733,7 @@ namespace Dma
         else if (direction == Direction::S2MM)
         {
             bool status;
-            XAxiDma_Bd bd_template;
+            XAxiDma_Bd bd_template{};
             XAxiDma_Bd *bd_ptr;
             XAxiDma_Bd *bd_curr_ptr;
             int bd_count;
@@ -755,14 +755,15 @@ namespace Dma
             }
 
             /*Setup a BD template for the Rx channel. Then copy it to every RX BD.*/
-            AxiDmaBd::XAxiDmaBdClear(reinterpret_cast<std::uintptr_t>(bd_template));
-
+            // AxiDmaBd::XAxiDmaBdClear(reinterpret_cast<std::uintptr_t>(bd_template));
+            /*
             status = m_RxBdRing.XAxiDmaBdRingClone(&bd_template);
             if (!status)
             {
                 SPDLOG_ERROR("Rx bd clone failed.");
                 return false;
             }
+            */
 
             free_bd_count = m_RxBdRing.m_FreeCnt;
             status = m_RxBdRing.XAxiDmaBdRingAlloc(free_bd_count, &bd_ptr);
@@ -775,6 +776,8 @@ namespace Dma
             bd_curr_ptr = bd_ptr;
             rx_buffer_address = data_buffer_phyaddr;
 
+            std::uint32_t frame_size = data_buffer_length / bd_count;
+
             for (int index = 0; index < free_bd_count; ++index)
             {
                 status = AxiDmaBd::XAxiDmaBdSetBufAddr(reinterpret_cast<std::uintptr_t>(bd_curr_ptr), rx_buffer_address);
@@ -786,7 +789,7 @@ namespace Dma
                     return false;
                 }
 
-                status = AxiDmaBd::XAxiDmaBdSetLength(reinterpret_cast<std::uintptr_t>(bd_curr_ptr), bd_ring_buf_length, m_RxBdRing.m_MaxTransferLen);
+                status = AxiDmaBd::XAxiDmaBdSetLength(reinterpret_cast<std::uintptr_t>(bd_curr_ptr), frame_size, m_RxBdRing.m_MaxTransferLen);
                 if (!status)
                 {
                     SPDLOG_ERROR("Rx set length failed for length={} bd_ptr={:08x} status={}",
@@ -801,17 +804,24 @@ namespace Dma
                 AxiDmaBd::XAxiDmaBdSetCtrl(reinterpret_cast<std::uintptr_t>(bd_curr_ptr), 0);
                 AxiDmaBd::XAxiDmaBdSetId(reinterpret_cast<std::uintptr_t>(bd_curr_ptr), rx_buffer_address);
 
-                rx_buffer_address += data_buffer_length;
+                rx_buffer_address += frame_size;
                 bd_curr_ptr = m_RxBdRing.XAxiDmaBdRingNext(reinterpret_cast<const XAxiDma_Bd *>(bd_curr_ptr));
+                SPDLOG_DEBUG("RX BD[{}] configured, buf_addr={:08x}, length={}", index,
+                             (unsigned int)(rx_buffer_address - frame_size),
+                             frame_size);
             }
 
-            status = m_RxBdRing.XAxiDmaBdRingSetCoalesce(16, 100);
+            SPDLOG_DEBUG("Flushing RX BD ring cache.");
+            buffers.FlushCache("udmabuf0");
+
+            status = m_RxBdRing.XAxiDmaBdRingSetCoalesce(16, 1);
             if (!status)
             {
                 SPDLOG_ERROR("Failed to set coalesce for Rx BD ring.");
                 return false;
             }
 
+            buffers.InvalidateCache("udmabuf0");
             status = m_RxBdRing.XAxiDmaBdRingToHw(free_bd_count, bd_ptr);
             if (!status)
             {

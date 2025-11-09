@@ -95,7 +95,7 @@ namespace Dma
         bool XAxiDmaIsStarted(Direction direction);
 
         bool XAxiDmaSimpleTransfer(Direction direction, std::uint64_t buffer_address, std::uint32_t length);
-        bool XAxiDmaCyclicTransfer(Direction direction, const UDmaBuffer &buffers);
+        bool XAxiDmaCyclicTransfer(Direction direction, UDmaBuffer &buffers);
 
         void XAxiDmaWaitSync(Direction direction);
 
