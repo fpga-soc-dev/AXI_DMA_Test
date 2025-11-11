@@ -6,7 +6,8 @@
 namespace Dma
 {
 
-    XAxiDmaBdRing::XAxiDmaBdRing(std::shared_ptr<UIO> uio_device) : m_UioDevice(uio_device)
+    XAxiDmaBdRing::XAxiDmaBdRing(std::shared_ptr<AxiDmaChannel> channel, const UDmaBuffer &udma_buffer) : m_Channel(channel),
+                                                                                                          m_UdmaBuffer(udma_buffer)
     {
     }
 
@@ -23,14 +24,17 @@ namespace Dma
         {
             if (!m_Addr_ext)
             {
-                m_BdRestart = reinterpret_cast<XAxiDma_Bd *>(static_cast<std::uintptr_t>(m_UioDevice->Read(m_ChanBaseOffset + XAXIDMA_CDESC_OFFSET)));
+                auto reg_val = m_Channel->ReadReg(AxiDmaChannel::XAXIDMA_CDESC_OFFSET);
+                std::uint8_t *bd_ptr = reinterpret_cast<std::uint8_t *>(reg_val);
+                m_BdRestart.SetBaseAddress(bd_ptr);
             }
             else
             {
-                auto lower_addr = m_UioDevice->Read(m_ChanBaseOffset + XAXIDMA_CDESC_OFFSET);
-                auto upper_addr = m_UioDevice->Read(m_ChanBaseOffset + XAXIDMA_CDESC_MSB_OFFSET);
-                auto bd_addr = reinterpret_cast<XAxiDma_Bd *>(static_cast<std::uintptr_t>(((static_cast<std::uintptr_t>(upper_addr) << 32) | lower_addr)));
-                m_BdRestart = bd_addr;
+                auto lower_addr = m_Channel->ReadReg(AxiDmaChannel::XAXIDMA_CDESC_OFFSET);
+                auto upper_addr = m_Channel->ReadReg(AxiDmaChannel::XAXIDMA_CDESC_MSB_OFFSET);
+                auto bd_addr = static_cast<std::uintptr_t>(lower_addr) | (static_cast<std::uintptr_t>(upper_addr) << 32);
+                std::uint8_t *bd_ptr = reinterpret_cast<std::uint8_t *>(bd_addr);
+                m_BdRestart.SetBaseAddress(bd_ptr);
             }
             return;
         }
@@ -41,14 +45,17 @@ namespace Dma
             // first RX ring
             if (!m_Addr_ext)
             {
-                m_BdRestart = reinterpret_cast<XAxiDma_Bd *>(static_cast<std::uintptr_t>(m_UioDevice->Read(m_ChanBaseOffset + XAXIDMA_CDESC_OFFSET)));
+                auto reg_value = m_Channel->ReadReg(AxiDmaChannel::XAXIDMA_CDESC_OFFSET);
+                std::uint8_t *bd_ptr = reinterpret_cast<std::uint8_t *>(static_cast<std::uintptr_t>(reg_value));
+                m_BdRestart.SetBaseAddress(bd_ptr);
             }
             else
             {
-                auto lower_addr = m_UioDevice->Read(m_ChanBaseOffset + XAXIDMA_CDESC_OFFSET);
-                auto upper_addr = m_UioDevice->Read(m_ChanBaseOffset + XAXIDMA_CDESC_MSB_OFFSET);
-                auto bd_addr = reinterpret_cast<XAxiDma_Bd *>(static_cast<std::uintptr_t>(((static_cast<std::uintptr_t>(upper_addr) << 32) | lower_addr)));
-                m_BdRestart = bd_addr;
+                auto lower_addr = m_Channel->ReadReg(AxiDmaChannel::XAXIDMA_CDESC_OFFSET);
+                auto upper_addr = m_Channel->ReadReg(AxiDmaChannel::XAXIDMA_CDESC_MSB_OFFSET);
+                auto bd_addr = static_cast<std::uintptr_t>(lower_addr) | (static_cast<std::uintptr_t>(upper_addr) << 32);
+                std::uint8_t *bd_ptr = reinterpret_cast<std::uint8_t *>(bd_addr);
+                m_BdRestart.SetBaseAddress(bd_ptr);
             }
         }
         else
@@ -56,14 +63,17 @@ namespace Dma
             if (!m_Addr_ext)
             {
                 auto off = XAXIDMA_RX_CDESC0_OFFSET + (m_RingIndex - 1) * XAXIDMA_RX_NDESC_OFFSET;
-                m_BdRestart = reinterpret_cast<XAxiDma_Bd *>(static_cast<std::uintptr_t>(m_UioDevice->Read(m_ChanBaseOffset + off)));
+                auto reg_value = m_Channel->ReadReg(off);
+                std::uint8_t *bd_ptr = reinterpret_cast<std::uint8_t *>(static_cast<std::uintptr_t>(reg_value));
+                m_BdRestart.SetBaseAddress(bd_ptr);
             }
             else
             {
-                auto lower_addr = m_UioDevice->Read(m_ChanBaseOffset + XAXIDMA_CDESC_OFFSET);
-                auto upper_addr = m_UioDevice->Read(m_ChanBaseOffset + XAXIDMA_RX_CDESC0_MSB_OFFSET + (m_RingIndex - 1) * XAXIDMA_RX_NDESC_OFFSET);
-                auto bd_addr = static_cast<std::uintptr_t>(lower_addr | (static_cast<std::uintptr_t>(upper_addr) << 32));
-                m_BdRestart = reinterpret_cast<XAxiDma_Bd *>(bd_addr);
+                auto lower_addr = m_Channel->ReadReg(AxiDmaChannel::XAXIDMA_CDESC_OFFSET);
+                auto upper_addr = m_Channel->ReadReg(AxiDmaChannel::XAXIDMA_RX_CDESC0_MSB_OFFSET + (m_RingIndex - 1) * AxiDmaChannel::XAXIDMA_RX_NDESC_OFFSET);
+                auto bd_addr = static_cast<std::uintptr_t>(lower_addr) | (static_cast<std::uintptr_t>(upper_addr) << 32);
+                std::uint8_t *bd_ptr = reinterpret_cast<std::uint8_t *>(bd_addr);
+                m_BdRestart.SetBaseAddress(bd_ptr);
             }
         }
     }
@@ -176,13 +186,13 @@ namespace Dma
         m_FreeCnt = bd_count;
 
         // Initialize all BD pointers to start of ring
-        auto *bd_ptr = reinterpret_cast<XAxiDma_Bd *>(static_cast<std::uintptr_t>(virt_addr));
-        m_FreeHead = bd_ptr;
-        m_PreHead = bd_ptr;
-        m_HwHead = bd_ptr;
-        m_HwTail = bd_ptr;
-        m_PostHead = bd_ptr;
-        m_BdRestart = bd_ptr;
+        std::uint8_t *bd_ptr = reinterpret_cast<std::uint8_t *>(virt_addr);
+        m_FreeHead.SetBaseAddress(bd_ptr);
+        m_PreHead.SetBaseAddress(bd_ptr);
+        m_HwHead.SetBaseAddress(bd_ptr);
+        m_HwTail.SetBaseAddress(bd_ptr);
+        m_PostHead.SetBaseAddress(bd_ptr);
+        m_BdRestart.SetBaseAddress(bd_ptr);
 
         // m_CyclicBd = new XAxiDma_Bd[]();
 
@@ -251,9 +261,9 @@ namespace Dma
             return false;
         }
 
-        *bd_ptr = m_FreeHead;
+        *bd_ptr = m_FreeHead.GetBaseAddress();
 
-        XAxiDmaRingSeekAhead(&m_FreeHead, num_bd);
+        XAxiDmaRingSeekAhead(m_FreeHead, num_bd);
 
         m_FreeCnt -= num_bd;
         m_PreCnt += num_bd;
@@ -262,23 +272,25 @@ namespace Dma
         return true;
     }
 
-    void XAxiDmaBdRing::XAxiDmaRingSeekAhead(XAxiDma_Bd **bd_ptr, int num_bd)
+    void XAxiDmaBdRing::XAxiDmaRingSeekAhead(AxiDmaBd &bd_ptr, int num_bd)
     {
-        std::uintptr_t addr = reinterpret_cast<std::uintptr_t>(*bd_ptr);
+        std::uint8_t *current_ptr = bd_ptr.GetBaseAddress();
+        auto addr = reinterpret_cast<std::uintptr_t>(current_ptr);
 
         addr += static_cast<std::uintptr_t>(m_Separation) *
                 static_cast<std::uintptr_t>(num_bd);
 
         if ((addr > m_LastBdAddr) ||
-            (reinterpret_cast<std::uintptr_t>(*bd_ptr) > addr))
+            (reinterpret_cast<std::uintptr_t>(current_ptr) > addr))
         {
             addr -= m_Length;
         }
 
-        *bd_ptr = reinterpret_cast<XAxiDma_Bd *>(addr);
+        std::uint8_t *new_ptr = reinterpret_cast<std::uint8_t *>(addr);
+        bd_ptr.SetBaseAddress(new_ptr);
     }
 
-    XAxiDma_Bd *XAxiDmaBdRing::XAxiDmaBdRingNext(const XAxiDma_Bd *bd)
+    std::uint8_t *XAxiDmaBdRing::XAxiDmaBdRingNext(const std::uint8_t *bd)
     {
         std::uintptr_t addr = reinterpret_cast<std::uintptr_t>(bd);
 
@@ -289,12 +301,12 @@ namespace Dma
             addr = m_FirstBdAddr;
         }
 
-        return reinterpret_cast<XAxiDma_Bd *>(addr);
+        return reinterpret_cast<std::uint8_t *>(addr);
     }
 
     bool XAxiDmaBdRing::XAxiDmaBdRingSetCoalesce(std::uint32_t counter, std::uint32_t timer)
     {
-        std::uint32_t control_reg = m_UioDevice->Read(m_ChanBaseOffset + XAXIDMA_CR_OFFSET);
+        std::uint32_t control_reg = m_Channel->ReadReg(AxiDmaChannel::XAXIDMA_CR_OFFSET);
 
         if (counter != XAXIDMA_NO_CHANGE)
         {
@@ -316,11 +328,12 @@ namespace Dma
             control_reg = (control_reg & ~XAXIDMA_DELAY_MASK) | (timer << XAXIDMA_DELAY_SHIFT);
         }
 
-        m_UioDevice->Write(m_ChanBaseOffset + XAXIDMA_CR_OFFSET, control_reg);
+        m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_CR_OFFSET, control_reg);
+
         return true;
     }
 
-    bool XAxiDmaBdRing::XAxiDmaBdRingToHw(int num_bd, XAxiDma_Bd *bd_set_ptr)
+    bool XAxiDmaBdRing::XAxiDmaBdRingToHw(int num_bd, std::uint8_t *bd_set_ptr)
     {
         if (num_bd < 0)
         {
@@ -334,14 +347,14 @@ namespace Dma
             return true;
         }
 
-        if ((num_bd > m_PreCnt) || (m_PreHead != bd_set_ptr))
+        if ((num_bd > m_PreCnt) || (m_PreHead.GetBaseAddress() != bd_set_ptr))
         {
             SPDLOG_ERROR("BdRingToHw: not enough BDs in pre-work group (requested {}, available {})", num_bd, m_PreCnt);
             return false;
         }
 
         // Update HwTail to point to the last BD being submitted to hardware
-        XAxiDma_Bd *cur_bd_ptr = bd_set_ptr;
+        std::uint8_t *cur_bd_ptr = bd_set_ptr;
         std::uint32_t bd_cr = AxiDmaBd::XAxiDmaBdGetCtrl(reinterpret_cast<std::uintptr_t>(cur_bd_ptr));
         std::uint32_t bd_sts = AxiDmaBd::XAxiDmaBdGetSts(reinterpret_cast<std::uintptr_t>(cur_bd_ptr));
 
@@ -396,9 +409,9 @@ namespace Dma
         // XAXIDMA_CACHE_FLUSH(CurBdPtr);
 
         /* This set has completed pre-processing, adjust ring pointers and counters*/
-        XAxiDmaRingSeekAhead(&m_PreHead, num_bd);
+        XAxiDmaRingSeekAhead(m_PreHead, num_bd);
+        m_HwTail.SetBaseAddress(cur_bd_ptr);
         m_PreCnt -= num_bd;
-        m_HwTail = cur_bd_ptr;
         m_HwCnt += num_bd;
 
         int ring_index = m_RingIndex;
@@ -409,11 +422,12 @@ namespace Dma
             if (m_Cyclic)
             {
                 // m_UioDevice->Write(m_ChanBaseOffset + XAXIDMA_TDESC_OFFSET, XAxiDmaVirtToPhys(m_CyclicBd));
-                m_UioDevice->Write(m_ChanBaseOffset + XAXIDMA_TDESC_OFFSET, m_LastBdPhysAddr);
+                m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_TDESC_OFFSET, m_LastBdPhysAddr);
+
                 if (m_Addr_ext)
                 {
                     // m_UioDevice->Write(m_ChanBaseOffset + XAXIDMA_TDESC_MSB_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(m_CyclicBd) >> 32) & 0xFFFFFFFF));
-                    m_UioDevice->Write(m_ChanBaseOffset + XAXIDMA_TDESC_MSB_OFFSET, static_cast<std::uint32_t>((m_LastBdPhysAddr >> 32) & 0xFFFFFFFF));
+                    m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_TDESC_MSB_OFFSET, static_cast<std::uint32_t>((m_LastBdPhysAddr >> 32) & 0xFFFFFFFF));
                 }
                 return true;
             }
@@ -422,31 +436,31 @@ namespace Dma
             {
                 if (!ring_index)
                 {
-                    m_UioDevice->Write(m_ChanBaseOffset + XAXIDMA_TDESC_OFFSET, (XAxiDmaVirtToPhys(m_HwTail) & XAXIDMA_DESC_LSB_MASK));
+                    m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_TDESC_OFFSET, (XAxiDmaVirtToPhys(m_HwTail) & XAXIDMA_DESC_LSB_MASK));
                     SPDLOG_DEBUG("Writing TDESC with BD addr 0x{:x}", XAxiDmaVirtToPhys(m_HwTail));
                     if (m_Addr_ext)
                     {
-                        m_UioDevice->Write(m_ChanBaseOffset + XAXIDMA_TDESC_MSB_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(m_HwTail) >> 32) & 0xFFFFFFFF));
+                        m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_TDESC_MSB_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(m_HwTail) >> 32) & 0xFFFFFFFF));
                     }
                 }
                 else
                 {
-                    auto off = XAXIDMA_RX_TDESC0_OFFSET + (ring_index - 1) * XAXIDMA_RX_NDESC_OFFSET;
-                    m_UioDevice->Write(m_ChanBaseOffset + off, (XAxiDmaVirtToPhys(m_HwTail) & XAXIDMA_DESC_LSB_MASK));
+                    auto off = AxiDmaChannel::XAXIDMA_RX_TDESC0_OFFSET + (ring_index - 1) * AxiDmaChannel::XAXIDMA_RX_NDESC_OFFSET;
+                    m_Channel->WriteReg(off, (XAxiDmaVirtToPhys(m_HwTail) & XAXIDMA_DESC_LSB_MASK));
                     SPDLOG_DEBUG("Writing TDESC[{}] with BD addr 0x{:x}", ring_index, XAxiDmaVirtToPhys(m_HwTail));
                     if (m_Addr_ext)
                     {
-                        m_UioDevice->Write(m_ChanBaseOffset + XAXIDMA_TDESC_MSB_OFFSET + (ring_index - 1) * XAXIDMA_RX_NDESC_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(m_HwTail) >> 32) & 0xFFFFFFFF));
+                        m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_TDESC_MSB_OFFSET + (ring_index - 1) * AxiDmaChannel::XAXIDMA_RX_NDESC_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(m_HwTail) >> 32) & 0xFFFFFFFF));
                     }
                 }
             }
             else
             {
-                m_UioDevice->Write(m_ChanBaseOffset + XAXIDMA_TDESC_OFFSET, (XAxiDmaVirtToPhys(m_HwTail) & XAXIDMA_DESC_LSB_MASK));
+                m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_TDESC_OFFSET, (XAxiDmaVirtToPhys(m_HwTail) & XAXIDMA_DESC_LSB_MASK));
                 SPDLOG_DEBUG("Writing TDESC with BD addr 0x{:x}", XAxiDmaVirtToPhys(m_HwTail));
                 if (m_Addr_ext)
                 {
-                    m_UioDevice->Write(m_ChanBaseOffset + XAXIDMA_TDESC_MSB_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(m_HwTail) >> 32) & 0xFFFFFFFF));
+                    m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_TDESC_MSB_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(m_HwTail) >> 32) & 0xFFFFFFFF));
                 }
             }
         }
@@ -455,8 +469,7 @@ namespace Dma
 
     bool XAxiDmaBdRing::XAxiDmaUpdateBdRingCDesc()
     {
-        std::uintptr_t reg_base;
-        std::uintptr_t bd_ptr;
+        std::uint8_t *bd_ptr;
         int ring_index = m_RingIndex;
 
         /* BD list has yet to be created for this channel */
@@ -478,12 +491,11 @@ namespace Dma
             /* If hardware is not running, then we need to put a valid current
              * BD pointer to the current BD register before start the hardware
              */
-            reg_base = m_ChanBaseOffset;
 
             /* Put a valid BD pointer in the current BD pointer register
              * So, the hardware is ready to go when tail BD pointer is updated
              */
-            bd_ptr = reinterpret_cast<std::uintptr_t>(m_BdRestart);
+            bd_ptr = m_BdRestart.GetBaseAddress();
             if (!AxiDmaBd::XAxiDmaBdHwCompleted(bd_ptr))
             {
                 SPDLOG_DEBUG("UpdateBdRingCDesc: found uncompleted BD at addr 0x{:x}", XAxiDmaVirtToPhys(reinterpret_cast<XAxiDma_Bd *>(bd_ptr)));
@@ -491,31 +503,31 @@ namespace Dma
                 {
                     if (!ring_index)
                     {
-                        m_UioDevice->Write(reg_base + XAXIDMA_CDESC_OFFSET, (XAxiDmaVirtToPhys(bd_ptr) & XAXIDMA_DESC_LSB_MASK));
+                        m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_CDESC_OFFSET, (XAxiDmaVirtToPhys(bd_ptr) & XAXIDMA_DESC_LSB_MASK));
                         SPDLOG_DEBUG("UpdateBdRingCDesc: write CDESC with BD addr 0x{:x}", XAxiDmaVirtToPhys(bd_ptr));
                         if (m_Addr_ext)
                         {
-                            m_UioDevice->Write(reg_base + XAXIDMA_CDESC_MSB_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(reinterpret_cast<XAxiDma_Bd *>(bd_ptr)) >> 32) & 0xFFFFFFFF));
+                            m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_CDESC_MSB_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(reinterpret_cast<XAxiDma_Bd *>(bd_ptr)) >> 32) & 0xFFFFFFFF));
                         }
                     }
                     else
                     {
-                        auto off = XAXIDMA_RX_CDESC0_OFFSET + (ring_index - 1) * XAXIDMA_RX_NDESC_OFFSET;
-                        m_UioDevice->Write(reg_base + off, (XAxiDmaVirtToPhys(bd_ptr) & XAXIDMA_DESC_LSB_MASK));
+                        auto off = AxiDmaChannel::XAXIDMA_RX_CDESC0_OFFSET + (ring_index - 1) * AxiDmaChannel::XAXIDMA_RX_NDESC_OFFSET;
+                        m_Channel->WriteReg(off, (XAxiDmaVirtToPhys(bd_ptr) & XAXIDMA_DESC_LSB_MASK));
                         SPDLOG_DEBUG("UpdateBdRingCDesc: write CDESC[{}] with BD addr 0x{:x}", ring_index, XAxiDmaVirtToPhys(bd_ptr));
                         if (m_Addr_ext)
                         {
-                            m_UioDevice->Write(reg_base + XAXIDMA_CDESC_MSB_OFFSET + (ring_index - 1) * XAXIDMA_RX_NDESC_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(reinterpret_cast<XAxiDma_Bd *>(bd_ptr)) >> 32) & 0xFFFFFFFF));
+                            m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_CDESC_MSB_OFFSET + (ring_index - 1) * AxiDmaChannel::XAXIDMA_RX_NDESC_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(reinterpret_cast<XAxiDma_Bd *>(bd_ptr)) >> 32) & 0xFFFFFFFF));
                         }
                     }
                 }
                 else
                 {
-                    m_UioDevice->Write(reg_base + XAXIDMA_CDESC_OFFSET, (XAxiDmaVirtToPhys(m_BdRestart) & XAXIDMA_DESC_LSB_MASK));
+                    m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_CDESC_OFFSET, (XAxiDmaVirtToPhys(m_BdRestart) & XAXIDMA_DESC_LSB_MASK));
                     SPDLOG_DEBUG("UpdateBdRingCDesc: write CDESC with BD addr 0x{:x}", XAxiDmaVirtToPhys(m_BdRestart));
                     if (m_Addr_ext)
                     {
-                        m_UioDevice->Write(reg_base + XAXIDMA_CDESC_MSB_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(m_BdRestart) >> 32) & 0xFFFFFFFF));
+                        m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_CDESC_MSB_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(m_BdRestart) >> 32) & 0xFFFFFFFF));
                     }
                 }
             }
@@ -537,31 +549,31 @@ namespace Dma
                         {
                             if (!ring_index)
                             {
-                                m_UioDevice->Write(reg_base + XAXIDMA_CDESC_OFFSET, (XAxiDmaVirtToPhys(reinterpret_cast<XAxiDma_Bd *>(bd_ptr)) & XAXIDMA_DESC_LSB_MASK));
+                                m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_CDESC_OFFSET, (XAxiDmaVirtToPhys(reinterpret_cast<XAxiDma_Bd *>(bd_ptr)) & XAXIDMA_DESC_LSB_MASK));
                                 SPDLOG_DEBUG("UpdateBdRingCDesc: write CDESC with BD addr 0x{:x}", XAxiDmaVirtToPhys(reinterpret_cast<XAxiDma_Bd *>(bd_ptr)));
                                 if (m_Addr_ext)
                                 {
-                                    m_UioDevice->Write(reg_base + XAXIDMA_CDESC_MSB_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(reinterpret_cast<XAxiDma_Bd *>(bd_ptr)) >> 32) & 0xFFFFFFFF));
+                                    m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_CDESC_MSB_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(reinterpret_cast<XAxiDma_Bd *>(bd_ptr)) >> 32) & 0xFFFFFFFF));
                                 }
                             }
                             else
                             {
-                                auto off = XAXIDMA_RX_CDESC0_OFFSET + (ring_index - 1) * XAXIDMA_RX_NDESC_OFFSET;
-                                m_UioDevice->Write(reg_base + off, (XAxiDmaVirtToPhys(reinterpret_cast<XAxiDma_Bd *>(bd_ptr)) & XAXIDMA_DESC_LSB_MASK));
+                                auto off = AxiDmaChannel::XAXIDMA_RX_CDESC0_OFFSET + (ring_index - 1) * AxiDmaChannel::XAXIDMA_RX_NDESC_OFFSET;
+                                m_Channel->WriteReg(off, (XAxiDmaVirtToPhys(reinterpret_cast<XAxiDma_Bd *>(bd_ptr)) & XAXIDMA_DESC_LSB_MASK));
                                 SPDLOG_DEBUG("UpdateBdRingCDesc: write CDESC[{}] with BD addr 0x{:x}", ring_index - 1, XAxiDmaVirtToPhys(reinterpret_cast<XAxiDma_Bd *>(bd_ptr)));
                                 if (m_Addr_ext)
                                 {
-                                    m_UioDevice->Write(reg_base + XAXIDMA_CDESC_MSB_OFFSET + (ring_index - 1) * XAXIDMA_RX_NDESC_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(reinterpret_cast<XAxiDma_Bd *>(bd_ptr)) >> 32) & 0xFFFFFFFF));
+                                    m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_CDESC_MSB_OFFSET + (ring_index - 1) * AxiDmaChannel::XAXIDMA_RX_NDESC_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(reinterpret_cast<XAxiDma_Bd *>(bd_ptr)) >> 32) & 0xFFFFFFFF));
                                 }
                             }
                         }
                         else
                         {
-                            m_UioDevice->Write(reg_base + XAXIDMA_CDESC_OFFSET, (XAxiDmaVirtToPhys(reinterpret_cast<XAxiDma_Bd *>(bd_ptr)) & XAXIDMA_DESC_LSB_MASK));
+                            m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_CDESC_OFFSET, (XAxiDmaVirtToPhys(reinterpret_cast<XAxiDma_Bd *>(bd_ptr)) & XAXIDMA_DESC_LSB_MASK));
                             SPDLOG_DEBUG("UpdateBdRingCDesc: write CDESC with BD addr 0x{:x}", XAxiDmaVirtToPhys(reinterpret_cast<XAxiDma_Bd *>(bd_ptr)));
                             if (m_Addr_ext)
                             {
-                                m_UioDevice->Write(reg_base + XAXIDMA_CDESC_MSB_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(reinterpret_cast<XAxiDma_Bd *>(bd_ptr)) >> 32) & 0xFFFFFFFF));
+                                m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_CDESC_MSB_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(reinterpret_cast<XAxiDma_Bd *>(bd_ptr)) >> 32) & 0xFFFFFFFF));
                             }
                         }
                         break;
@@ -574,17 +586,14 @@ namespace Dma
 
     bool XAxiDmaBdRing::XAxiDmaStartBdRingHw()
     {
-        std::uintptr_t reg_base;
         int ring_index = m_RingIndex;
 
         if (!XAxiDmaBdRingHwIsStarted())
         {
             /* Start the hardware*/
-            reg_base = m_ChanBaseOffset;
-
-            std::uint32_t control_reg = m_UioDevice->Read(reg_base + XAXIDMA_CR_OFFSET);
+            std::uint32_t control_reg = m_Channel->ReadReg(AxiDmaChannel::XAXIDMA_CR_OFFSET);
             control_reg |= XAXIDMA_CR_RUNSTOP_MASK;
-            m_UioDevice->Write(reg_base + XAXIDMA_CR_OFFSET, control_reg);
+            m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_CR_OFFSET, control_reg);
         }
 
         if (XAxiDmaBdRingHwIsStarted())
@@ -597,13 +606,13 @@ namespace Dma
                 if (m_Cyclic)
                 {
                     // m_UioDevice->Write(m_ChanBaseOffset + XAXIDMA_TDESC_OFFSET, XAxiDmaVirtToPhys(m_CyclicBd));
-                    m_UioDevice->Write(m_ChanBaseOffset + XAXIDMA_TDESC_OFFSET, m_LastBdPhysAddr);
+                    m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_TDESC_OFFSET, m_LastBdPhysAddr);
                     SPDLOG_DEBUG("m_LastBdPhysAddr:0x{:X} , m_FirstBdPhysAddr:{:X} , m_FirstBdAddr:{:X} , XAxiDmaVirtToPhys(m_LastBdPhysAddr):{:X}", m_LastBdPhysAddr, m_FirstBdPhysAddr, m_FirstBdAddr, XAxiDmaVirtToPhys(m_LastBdPhysAddr));
 
                     if (m_Addr_ext)
                     {
                         // m_UioDevice->Write(m_ChanBaseOffset + XAXIDMA_TDESC_MSB_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(m_CyclicBd) >> 32) & 0xFFFFFFFF));
-                        m_UioDevice->Write(m_ChanBaseOffset + XAXIDMA_TDESC_MSB_OFFSET, static_cast<std::uint32_t>((m_LastBdPhysAddr >> 32) & 0xFFFFFFFF));
+                        m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_TDESC_MSB_OFFSET, static_cast<std::uint32_t>((m_LastBdPhysAddr >> 32) & 0xFFFFFFFF));
                     }
                     return true;
                 }
@@ -614,32 +623,32 @@ namespace Dma
                     {
                         if (!ring_index)
                         {
-                            m_UioDevice->Write(m_ChanBaseOffset + XAXIDMA_TDESC_OFFSET, (XAxiDmaVirtToPhys(m_HwTail) & XAXIDMA_DESC_LSB_MASK));
+                            m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_TDESC_OFFSET, (XAxiDmaVirtToPhys(m_HwTail) & XAXIDMA_DESC_LSB_MASK));
                             SPDLOG_DEBUG("Starting RX BD transfer at phys addr 0x{:X}", (XAxiDmaVirtToPhys(m_HwTail) & XAXIDMA_DESC_LSB_MASK));
 
                             if (m_Addr_ext)
                             {
-                                m_UioDevice->Write(m_ChanBaseOffset + XAXIDMA_TDESC_MSB_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(m_HwTail) >> 32) & 0xFFFFFFFF));
+                                m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_TDESC_MSB_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(m_HwTail) >> 32) & 0xFFFFFFFF));
                             }
                         }
                         else
                         {
-                            auto off = XAXIDMA_RX_TDESC0_OFFSET + (ring_index - 1) * XAXIDMA_RX_NDESC_OFFSET;
-                            m_UioDevice->Write(m_ChanBaseOffset + off, (XAxiDmaVirtToPhys(m_HwTail) & XAXIDMA_DESC_LSB_MASK));
+                            auto off = AxiDmaChannel::XAXIDMA_RX_TDESC0_OFFSET + (ring_index - 1) * AxiDmaChannel::XAXIDMA_RX_NDESC_OFFSET;
+                            m_Channel->WriteReg(off, (XAxiDmaVirtToPhys(m_HwTail) & XAXIDMA_DESC_LSB_MASK));
                             SPDLOG_DEBUG("Starting RX BD[{}] transfer at phys addr 0x{:X}", ring_index, (XAxiDmaVirtToPhys(m_HwTail) & XAXIDMA_DESC_LSB_MASK));
                             if (m_Addr_ext)
                             {
-                                m_UioDevice->Write(m_ChanBaseOffset + XAXIDMA_TDESC_MSB_OFFSET + (ring_index - 1) * XAXIDMA_RX_NDESC_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(m_HwTail) >> 32) & 0xFFFFFFFF));
+                                m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_TDESC_MSB_OFFSET + (ring_index - 1) * AxiDmaChannel::XAXIDMA_RX_NDESC_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(m_HwTail) >> 32) & 0xFFFFFFFF));
                             }
                         }
                     }
                     else
                     {
-                        m_UioDevice->Write(m_ChanBaseOffset + XAXIDMA_TDESC_OFFSET, (XAxiDmaVirtToPhys(m_HwTail) & XAXIDMA_DESC_LSB_MASK));
+                        m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_TDESC_OFFSET, (XAxiDmaVirtToPhys(m_HwTail) & XAXIDMA_DESC_LSB_MASK));
                         SPDLOG_DEBUG("Starting TX BD transfer at phys addr 0x{:X}", (XAxiDmaVirtToPhys(m_HwTail) & XAXIDMA_DESC_LSB_MASK));
                         if (m_Addr_ext)
                         {
-                            m_UioDevice->Write(m_ChanBaseOffset + XAXIDMA_TDESC_MSB_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(m_HwTail) >> 32) & 0xFFFFFFFF));
+                            m_Channel->WriteReg(AxiDmaChannel::XAXIDMA_TDESC_MSB_OFFSET, static_cast<std::uint32_t>((XAxiDmaVirtToPhys(m_HwTail) >> 32) & 0xFFFFFFFF));
                         }
                     }
                 }
@@ -671,19 +680,141 @@ namespace Dma
         return true;
     }
 
+    bool XAxiDmaBdRing::XAxiDmaBdRingFromHw(int bd_limit, std::uint8_t **bd_set_ptr)
+    {
+        std::uint8_t *cur_bd_ptr = m_HwHead.GetBaseAddress();
+        int bd_count{0};
+        int bd_partial_count{0};
+        std::uint32_t bd_sts{0};
+        std::uint32_t bd_cr{0};
+
+        cur_bd_ptr = m_HwHead.GetBaseAddress();
+
+        if (m_HwCnt == 0)
+        {
+            *bd_set_ptr = nullptr;
+            return 0;
+        }
+
+        if (bd_limit > m_HwCnt)
+        {
+            bd_limit = m_HwCnt;
+        }
+
+        /* Starting at HwHead, keep moving forward in the list until:
+         *  - A BD is encountered with its completed bit clear in the status
+         *    word which means hardware has not completed processing of that
+         *    BD.
+         *  - RingPtr->HwTail is reached
+         *  - The number of requested BDs has been processed
+         */
+
+        while (bd_count < bd_limit)
+        {
+            /* Read the status */
+            // XAXIDMA_CACHE_INVALIDATE(CurBdPtr);
+            bd_sts = AxiDmaBd::XAxiDmaBdRead(reinterpret_cast<std::uintptr_t>(cur_bd_ptr), XAXIDMA_BD_STS_OFFSET);
+            bd_cr = AxiDmaBd::XAxiDmaBdRead(reinterpret_cast<std::uintptr_t>(cur_bd_ptr), XAXIDMA_BD_CTRL_LEN_OFFSET);
+
+            /* If the hardware still hasn't processed this BD then we are
+             * done
+             */
+            if (!(bd_sts & XAXIDMA_BD_STS_COMPLETE_MASK))
+            {
+                break;
+            }
+
+            bd_count++;
+
+            /* Hardware has processed this BD so check the "last" bit. If
+             * it is clear, then there are more BDs for the current packet.
+             * Keep a count of these partial packet BDs.
+             *
+             * For tx BDs, EOF bit is in the control word
+             * For rx BDs, EOF bit is in the status word
+             */
+            if (((!(m_IsRxChannel) && (bd_cr & XAXIDMA_BD_CTRL_TXEOF_MASK)) ||
+                 ((m_IsRxChannel) && (bd_sts & XAXIDMA_BD_STS_RXEOF_MASK))))
+            {
+                bd_partial_count = 0;
+            }
+            else
+            {
+                bd_partial_count++;
+            }
+
+            if (m_Cyclic)
+            {
+                bd_sts = bd_sts & ~XAXIDMA_BD_STS_COMPLETE_MASK;
+                AxiDmaBd::XAxiDmaBdWrite(reinterpret_cast<std::uintptr_t>(cur_bd_ptr), XAXIDMA_BD_STS_OFFSET, bd_sts);
+                // XAXIDMA_CACHE_FLUSH(cur_bd_ptr);
+            }
+
+            /* Reached the end of the work group */
+            if (cur_bd_ptr == m_HwTail)
+            {
+                break;
+            }
+
+            /* Move on to the next BD in work group */
+            cur_bd_ptr = (XAxiDma_Bd *)((void *)XAxiDmaBdRingNext(cur_bd_ptr));
+        }
+
+        /* Subtract off any partial packet BDs found */
+        bd_count -= bd_partial_count;
+        /* If BdCount is non-zero then BDs were found to return. Set return
+         * parameters, update pointers and counters, return success
+         */
+        if (bd_count)
+        {
+            *bd_set_ptr = m_HwHead.GetBaseAddress();
+            if (!m_Cyclic)
+            {
+                m_HwCnt -= bd_count;
+                m_PostCnt += bd_count;
+            }
+            XAxiDmaRingSeekAhead(m_HwHead, bd_count);
+
+            return bd_count;
+        }
+        else
+        {
+            *bd_set_ptr = nullptr;
+            return 0;
+        }
+    }
+
     bool XAxiDmaBdRing::XAxiDmaBdRingHwIsStarted()
     {
-        return !(m_UioDevice->Read(m_ChanBaseOffset + XAXIDMA_SR_OFFSET) & XAXIDMA_HALTED_MASK);
+        return !(m_Channel->ReadReg(AxiDmaChannel::XAXIDMA_SR_OFFSET) & AxiDmaChannel::XAXIDMA_HALTED_MASK);
     }
 
-    std::uintptr_t XAxiDmaBdRing::XAxiDmaVirtToPhys(const XAxiDma_Bd *bd_ptr)
+    std::uint8_t *XAxiDmaBdRing::XAxiDmaVirtToPhys(const std::uint8_t *bd_ptr)
     {
-        return reinterpret_cast<std::uintptr_t>(bd_ptr) + (m_FirstBdPhysAddr - m_FirstBdAddr);
+        return (bd_ptr + (m_FirstBdPhysAddr - m_FirstBdAddr));
     }
 
-    std::uintptr_t XAxiDmaBdRing::XAxiDmaVirtToPhys(std::uintptr_t bd_addr)
+    std::uint8_t *XAxiDmaBdRing::XAxiDmaVirtToPhys(std::uint8_t *bd_addr)
     {
         return bd_addr + (m_FirstBdPhysAddr - m_FirstBdAddr);
     }
 
+    void XAxiDmaBdRing::XAxiDmaBdRingDumpRegs()
+    {
+        int ring_index = m_RingIndex;
+
+        SPDLOG_INFO("===== AXI DMA BD Ring Registers Dump =====");
+        SPDLOG_INFO("CR         : 0x{:08X}", m_Channel->ReadReg(AxiDmaChannel::XAXIDMA_CR_OFFSET));
+        SPDLOG_INFO("SR         : 0x{:08X}", m_Channel->ReadReg(AxiDmaChannel::XAXIDMA_SR_OFFSET));
+        if (ring_index)
+        {
+            SPDLOG_INFO("CURDESC[{}]: 0x{:08X}", ring_index, m_Channel->ReadReg(AxiDmaChannel::XAXIDMA_RX_CDESC0_OFFSET + (ring_index - 1) * AxiDmaChannel::XAXIDMA_RX_NDESC_OFFSET));
+            SPDLOG_INFO("TAILDESC[{}]: 0x{:08X}", ring_index, m_Channel->ReadReg(AxiDmaChannel::XAXIDMA_RX_TDESC0_OFFSET + (ring_index - 1) * AxiDmaChannel::XAXIDMA_RX_NDESC_OFFSET));
+        }
+        else
+        {
+            SPDLOG_INFO("CURDESC    : 0x{:08X}", m_Channel->ReadReg(AxiDmaChannel::XAXIDMA_CDESC_OFFSET));
+            SPDLOG_INFO("TAILDESC   : 0x{:08X}", m_Channel->ReadReg(AxiDmaChannel::XAXIDMA_TDESC_OFFSET));
+        }
+    }
 } // namespace Dma

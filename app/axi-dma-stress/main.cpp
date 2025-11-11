@@ -35,7 +35,8 @@ void TestAxiDmaSimpleSingleChannel()
     dataGen.SetConfig(TEST_SAMPLE_COUNT, TEST_FRAME_INTERVAL_US);
 
     Dma::UDmaBufferAllocate::UdmaBufConfig buffer_vec = {
-        .buffer_vec = {std::make_pair(0, dataGen.GetFrameSize())}};
+        .buffer_vec = {
+            {0, dataGen.GetFrameSize()}}};
 
     Dma::UDmaBuffer dmaBuffer(buffer_vec, Dma::UDmaBuffer::CachePolicy::Cached);
     Dma::AxiDma axiDma("axi-dma-simple", dma_config);
@@ -46,8 +47,8 @@ void TestAxiDmaSimpleSingleChannel()
     auto buffer_names = dmaBuffer.GetAllocatedBuffers();
     std::string buf_name = buffer_names[0];
 
-    axiDma.AttachInterruptHandler(Dma::AxiDma::Direction::S2MM, [&]()
-                                  {
+    axiDma.AttachInterruptRxHandler([&]()
+                                    {
         if (!test_running.load())
         return;
         
@@ -101,6 +102,7 @@ void TestAxiDmaSimpleSingleChannel()
     SPDLOG_INFO("Data integrity verified for all captured frames.");
 }
 
+#ifdef UNUSED
 void TestAxiDmaCyclicSingleChannel()
 {
     Dma::AxiDma::Config dma_config{
@@ -130,8 +132,8 @@ void TestAxiDmaCyclicSingleChannel()
 
     Dma::UDmaBufferAllocate::UdmaBufConfig buffer_vec{
         .buffer_vec = {
-            std::make_pair(0, 1024),                       // for BD descriptors
-            std::make_pair(1, dataGen.GetFrameSize() * 16) // for streamdata bd count * one frame size
+            {0, 1024},                       // for BD descriptors
+            {1, dataGen.GetFrameSize() * 16} // for streamdata bd count * one frame size
         }};
 
     Dma::UDmaBuffer dmaBuffer(buffer_vec, Dma::UDmaBuffer::CachePolicy::Cached);
@@ -155,7 +157,7 @@ void TestAxiDmaCyclicSingleChannel()
         std::uint32_t *frame_data = reinterpret_cast<uint32_t *>(data_ptr);
         SPDLOG_DEBUG("framedata: {}, {}, {}, {},{},{},{}", frame_data[0], frame_data[1], frame_data[2], frame_data[3],frame_data[4095],frame_data[4096],frame_data[4097]);
 
-    
+        SPDLOG_DEBUG("BD Count in DMA: {}", axiDma.XAxiDmaGetBdCount(Dma::AxiDma::Direction::S2MM));
         interrupt_count++; }, false);
 
     SPDLOG_INFO("Starting 10-second test with single frame transfers...");
@@ -174,7 +176,7 @@ void TestAxiDmaCyclicSingleChannel()
     axiDma.Stop();
     dataGen.Stop();
 }
-
+#endif
 int main()
 {
     spdlog::set_level(spdlog::level::debug);
@@ -182,8 +184,8 @@ int main()
 
     try
     {
-        // TestAxiDmaSimpleSingleChannel();
-        TestAxiDmaCyclicSingleChannel();
+        TestAxiDmaSimpleSingleChannel();
+        // TestAxiDmaCyclicSingleChannel();
     }
     catch (const std::exception &e)
     {

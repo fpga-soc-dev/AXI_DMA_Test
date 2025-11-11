@@ -56,10 +56,21 @@ namespace Dma
             DMA_FROM_DEVICE = 2,
         };
 
-        UDmaBuffer(UDmaBufferAllocate::UdmaBufConfig buffer_vec, CachePolicy cache_policy, uint8_t quirk_mmap_mode = 2);
+        struct BufferEntry
+        {
+            int fd{-1};
+            std::byte *ptr{nullptr};
+            std::uint64_t phys_addr{0};
+            std::size_t size{0};
+            DriverInfo driver{};
+            DeviceInfo device{};
+            SyncInfo sync{};
+        };
+
+        explicit UDmaBuffer(CachePolicy cache_policy);
         ~UDmaBuffer();
 
-        bool CreateBuffer(UDmaBufferAllocate::UdmaBufConfig buffer_vec, CachePolicy cache_policy, uint8_t quirk_mmap_mode = 2);
+        bool CreateBuffer(const UDmaBufferAllocate::UdmaBufConfig &cfg, uint8_t quirk_mmap_mode = 2);
 
         DriverInfo GetDriverInfo(std::string buffer_name) const;
         DeviceInfo GetDeviceInfo(std::string buffer_name) const;
@@ -93,18 +104,9 @@ namespace Dma
         void PrintBuffersInfo() const;
 
     private:
-        const std::string m_BufferName;
-        const std::string m_Devicepath;
-        const std::string m_Classpath;
-        const CachePolicy m_Policy;
-
+        CachePolicy m_Policy;
         std::unique_ptr<UDmaBufferAllocate> m_BufferAllocator;
-
-        std::unordered_map<std::string, int> m_BufferFds;
-        std::unordered_map<std::string, std::byte *> m_BufferPtr;
-        std::unordered_map<std::string, DriverInfo> m_DriverInfos;
-        std::unordered_map<std::string, DeviceInfo> m_DeviceInfos;
-        std::unordered_map<std::string, SyncInfo> m_SyncInfo;
+        std::unordered_map<std::string, BufferEntry> m_Buffers;
 
         void PrintDriverInfo(const std::string buffer_name) const;
         void PrintDeviceInfo(const std::string buffer_name) const;

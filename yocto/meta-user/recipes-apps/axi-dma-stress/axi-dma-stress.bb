@@ -29,6 +29,8 @@ SRC_URI = "\
     file://AxiDma/AxiDmaHw.hpp \
     file://AxiDma/AxiDmaBdRing.hpp \
     file://AxiDma/AxiDmaBdRing.cpp \
+    file://AxiDma/AxiDmaChannel.hpp \
+    file://AxiDma/AxiDmaChannel.cpp \
     "
 
 S = "${WORKDIR}"

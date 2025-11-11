@@ -21,6 +21,7 @@ set(SOURCES
     AxiDma/AxiDma.cpp
     AxiDma/AxiDmaBd.cpp
     AxiDma/AxiDmaBdRing.cpp
+    AxiDma/AxiDmaChannel.cpp
     AxiTrafficGen/AxiTrafficGen.cpp
     UIO/Uio.cpp
     main.cpp

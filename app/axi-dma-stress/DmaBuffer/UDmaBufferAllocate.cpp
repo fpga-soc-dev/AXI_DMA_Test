@@ -16,122 +16,160 @@ namespace Dma
         FreeBuffers();
     }
 
-    bool UDmaBufferAllocate::AllocateBuffers(uint8_t num_buffers, uint32_t size_per_buffer, uint8_t quirk_mmap_mode)
+    bool UDmaBufferAllocate::AllocateBuffers(uint8_t num_buffers,
+                                             uint32_t size_per_buffer,
+                                             uint8_t quirk_mmap_mode)
     {
-        try
+
+        if (num_buffers < 1 || num_buffers > 8 || size_per_buffer < 1)
         {
-            if (num_buffers < 1 || num_buffers > 8 || size_per_buffer < 1)
+            SPDLOG_ERROR("Invalid buffer parameters: count={} size={}", num_buffers, size_per_buffer);
+            return false;
+        }
+
+        struct utsname uts{};
+        if (uname(&uts) != 0)
+        {
+            SPDLOG_ERROR("Failed to get system information: {}", strerror(errno));
+            return false;
+        }
+
+        std::string module_path = "/lib/modules/" + std::string(uts.release) + "/updates/" + std::string(U_DMA_BUF_MODULE_NAME);
+        if (!std::filesystem::exists(module_path))
+        {
+            std::string alt = "/lib/modules/" + std::string(uts.release) + "/extra/" + std::string(U_DMA_BUF_MODULE_NAME);
+            if (std::filesystem::exists(alt))
             {
-                throw std::runtime_error("Buffer number must be between 1 and 8 and size must be at least 1");
+                module_path = alt;
             }
+        }
 
-            struct utsname uts;
-            if (uname(&uts) != 0)
+        m_ModuleFd = ::open(module_path.c_str(), O_RDONLY);
+        if (m_ModuleFd < 0)
+        {
+            SPDLOG_ERROR("Failed to open u-dma-buf module file '{}': {}", module_path, strerror(errno));
+            return false;
+        }
+
+        std::string param;
+        for (uint8_t i = 0; i < num_buffers; ++i)
+        {
+            param += "udmabuf" + std::to_string(i) + "=" + std::to_string(size_per_buffer) + " ";
+        }
+
+        param += "quirk_mmap_mode=" + std::to_string(quirk_mmap_mode) + " info_enable=0";
+
+        if (syscall(SYS_finit_module, m_ModuleFd, param.c_str(), 0) != 0)
+        {
+            if (errno == EEXIST)
             {
-                throw std::runtime_error("Failed to get system information: " + std::string(strerror(errno)));
-            }
-
-            std::string module_path = "/lib/modules/" + std::string(uts.release) + "/updates/" + U_DMA_BUF_MODULE_NAME;
-
-            m_ModuleFd = ::open(module_path.c_str(), O_RDONLY);
-            if (m_ModuleFd < 0)
-            {
-                throw std::runtime_error("Failed to open u-dma-buf module file: " + std::string(strerror(errno)));
-            }
-
-            std::string param;
-            for (int i = 0; i < num_buffers; ++i)
-            {
-                param += "udmabuf" + std::to_string(i) + "=" + std::to_string(size_per_buffer) + " ";
-            }
-
-            param += "quirk_mmap_mode=" + std::to_string(quirk_mmap_mode) + " info_enable=0";
-
-            if (syscall(SYS_finit_module, m_ModuleFd, param.c_str(), 0) != 0)
-            {
-                if (errno == EEXIST)
+                SPDLOG_WARN("u_dma_buf module already loaded. Now unloading and reloading with new parameters.");
+                if (syscall(SYS_delete_module, U_DMA_BUF_LOADED_MODULE, 0) != 0)
                 {
-                    SPDLOG_WARN("u_dma_buf module already loaded. Now unloading and reloading with new parameters.");
-                    if (syscall(SYS_delete_module, U_DMA_BUF_LOADED_MODULE, 0) != 0)
-                    {
-                        SPDLOG_WARN("Failed to unload u_dma_buf module: {}", strerror(errno));
-                    }
-                }
-                else
-                {
+                    SPDLOG_ERROR("Failed to unload existing u_dma_buf module: {}", strerror(errno));
                     ::close(m_ModuleFd);
                     m_ModuleFd = -1;
-                    throw std::runtime_error("Failed to load u-dma-buf module: " + std::string(strerror(errno)));
+                    return false;
+                }
+
+                if (syscall(SYS_finit_module, m_ModuleFd, param.c_str(), 0) != 0)
+                {
+                    SPDLOG_ERROR("Failed to reload u_dma_buf module with new params: {}", strerror(errno));
+                    ::close(m_ModuleFd);
+                    m_ModuleFd = -1;
+                    return false;
                 }
             }
+            else
+            {
+                ::close(m_ModuleFd);
+                m_ModuleFd = -1;
+                SPDLOG_ERROR("Failed to load u-dma-buf module: {}", strerror(errno));
+                return false;
+            }
+        }
 
-            m_AllocatedBuffersCount = num_buffers;
-            SPDLOG_INFO("Successfully allocated {} DMA buffers of size {} bytes each.", num_buffers, size_per_buffer);
-            return true;
-        }
-        catch (const std::exception &e)
-        {
-            throw std::runtime_error("Failed to allocate buffer: " + std::string(e.what()));
-        }
+        m_AllocatedBuffersCount = num_buffers;
+        m_IsAllocated = true;
+        SPDLOG_INFO("Successfully allocated {} DMA buffers of size {} bytes each.", num_buffers, size_per_buffer);
+        return true;
     }
 
-    bool UDmaBufferAllocate::AllocateBuffers(UdmaBufConfig buffer_vec, uint8_t quirk_mmap_mode)
+    bool UDmaBufferAllocate::AllocateBuffers(UdmaBufConfig cfg, uint8_t quirk_mmap_mode)
     {
-        try
+
+        if (cfg.buffer_vec.size() < 1 || cfg.buffer_vec.size() > 8)
         {
-            if (buffer_vec.buffer_vec.size() < 1 || buffer_vec.buffer_vec.size() > 8)
+            SPDLOG_ERROR("Buffer number must be between 1 and 8 (got {})", cfg.buffer_vec.size());
+            return false;
+        }
+
+        struct utsname uts{};
+        if (uname(&uts) != 0)
+        {
+            SPDLOG_ERROR("Failed to get system information: {}", strerror(errno));
+            return false;
+        }
+
+        std::string module_path = "/lib/modules/" + std::string(uts.release) + "/updates/" + std::string(U_DMA_BUF_MODULE_NAME);
+        if (!std::filesystem::exists(module_path))
+        {
+            std::string alt =
+                "/lib/modules/" + std::string(uts.release) + "/extra/" + std::string(U_DMA_BUF_MODULE_NAME);
+            if (std::filesystem::exists(alt))
             {
-                throw std::runtime_error("Buffer number must be between 1 and 8");
+                module_path = alt;
             }
+        }
 
-            struct utsname uts;
-            if (uname(&uts) != 0)
+        m_ModuleFd = ::open(module_path.c_str(), O_RDONLY);
+        if (m_ModuleFd < 0)
+        {
+            SPDLOG_ERROR("Failed to open u-dma-buf module file '{}': {}", module_path, strerror(errno));
+            return false;
+        }
+
+        std::string param;
+        for (const auto &buf_elem : cfg.buffer_vec)
+        {
+            param += "udmabuf" + std::to_string(buf_elem.index) + "=" + std::to_string(buf_elem.size) + " ";
+        }
+
+        param += "quirk_mmap_mode=" + std::to_string(quirk_mmap_mode) + " info_enable=0";
+
+        if (syscall(SYS_finit_module, m_ModuleFd, param.c_str(), 0) != 0)
+        {
+            if (errno == EEXIST)
             {
-                throw std::runtime_error("Failed to get system information: " + std::string(strerror(errno)));
-            }
-
-            std::string module_path = "/lib/modules/" + std::string(uts.release) + "/updates/" + U_DMA_BUF_MODULE_NAME;
-
-            m_ModuleFd = ::open(module_path.c_str(), O_RDONLY);
-            if (m_ModuleFd < 0)
-            {
-                throw std::runtime_error("Failed to open u-dma-buf module file: " + std::string(strerror(errno)));
-            }
-
-            std::string param;
-            for (const auto &buf_elem : buffer_vec.buffer_vec)
-            {
-                param += "udmabuf" + std::to_string(buf_elem.first) + "=" + std::to_string(buf_elem.second) + " ";
-            }
-
-            param += "quirk_mmap_mode=" + std::to_string(quirk_mmap_mode) + " info_enable=0";
-
-            if (syscall(SYS_finit_module, m_ModuleFd, param.c_str(), 0) != 0)
-            {
-                if (errno == EEXIST)
+                SPDLOG_WARN("u_dma_buf module already loaded, unloading and retrying...");
+                if (syscall(SYS_delete_module, U_DMA_BUF_LOADED_MODULE, 0) != 0)
                 {
-                    SPDLOG_WARN("u_dma_buf module already loaded. Now unloading and reloading with new parameters.");
-                    if (syscall(SYS_delete_module, U_DMA_BUF_LOADED_MODULE, 0) != 0)
-                    {
-                        SPDLOG_WARN("Failed to unload u_dma_buf module: {}", strerror(errno));
-                    }
-                }
-                else
-                {
+                    SPDLOG_ERROR("Failed to unload existing u_dma_buf module: {}", strerror(errno));
                     ::close(m_ModuleFd);
                     m_ModuleFd = -1;
-                    throw std::runtime_error("Failed to load u-dma-buf module: " + std::string(strerror(errno)));
+                    return false;
+                }
+
+                if (syscall(SYS_finit_module, m_ModuleFd, param.c_str(), 0) != 0)
+                {
+                    SPDLOG_ERROR("Failed to reload u_dma_buf module with new params: {}", strerror(errno));
+                    ::close(m_ModuleFd);
+                    m_ModuleFd = -1;
+                    return false;
                 }
             }
+            else
+            {
+                SPDLOG_ERROR("Failed to load u-dma-buf module: {}", strerror(errno));
+                ::close(m_ModuleFd);
+                m_ModuleFd = -1;
+                return false;
+            }
+        }
 
-            m_AllocatedBuffersCount = static_cast<uint8_t>(buffer_vec.buffer_vec.size());
-            SPDLOG_INFO("Successfully allocated {} DMA buffers", buffer_vec.buffer_vec.size());
-            return true;
-        }
-        catch (const std::exception &e)
-        {
-            throw std::runtime_error("Failed to allocate buffer: " + std::string(e.what()));
-        }
+        m_AllocatedBuffersCount = static_cast<std::uint8_t>(cfg.buffer_vec.size());
+        SPDLOG_INFO("Successfully allocated {} DMA buffers", cfg.buffer_vec.size());
+        return true;
     }
 
     bool UDmaBufferAllocate::FreeBuffers()
@@ -139,16 +177,23 @@ namespace Dma
         if (syscall(SYS_delete_module, U_DMA_BUF_LOADED_MODULE, 0) != 0)
         {
             SPDLOG_WARN("Failed to unload u_dma_buf module: {}", strerror(errno));
-            return false;
         }
 
+        bool closed = true;
         if (m_ModuleFd >= 0)
         {
             ::close(m_ModuleFd);
             m_ModuleFd = -1;
-            return true;
         }
-        return false;
+        else
+        {
+            closed = false;
+        }
+
+        m_IsAllocated = false;
+        m_AllocatedBuffersCount = 0;
+
+        return closed;
     }
 
     std::vector<std::string> UDmaBufferAllocate::GetAllocatedBuffers()

@@ -1,4 +1,3 @@
-#include <stdexcept>
 #include "UDmaBuffer.hpp"
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
@@ -6,85 +5,48 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <stdio.h>
 #include <errno.h>
 #include <spdlog/spdlog.h>
 
 namespace Dma
 {
 
-    UDmaBuffer::UDmaBuffer(UDmaBufferAllocate::UdmaBufConfig buffer_vec, CachePolicy cache_policy, uint8_t quirk_mmap_mode)
-        : m_Policy(cache_policy), m_BufferAllocator(std::make_unique<UDmaBufferAllocate>())
+    UDmaBuffer::UDmaBuffer(CachePolicy cache_policy) : m_Policy(cache_policy), m_BufferAllocator(std::make_unique<UDmaBufferAllocate>())
     {
-
-        if (!CreateBuffer(buffer_vec, cache_policy, quirk_mmap_mode))
-        {
-            throw std::runtime_error("Failed to create DMA buffers");
-        }
-
-        for (auto &[buf_name, fd] : m_BufferFds)
-        {
-            int new_fd;
-            if (m_Policy == CachePolicy::Cached)
-            {
-                new_fd = ::open(("/dev/" + buf_name).c_str(), O_RDWR);
-            }
-            else
-            {
-                new_fd = ::open(("/dev/" + buf_name).c_str(), O_RDWR | O_SYNC);
-            }
-
-            if (new_fd < 0)
-            {
-                throw std::runtime_error("Failed to open buffer device: " + buf_name);
-            }
-
-            fd = new_fd;
-        }
-
-        for (auto &[buf_name, fd] : m_BufferFds)
-        {
-            m_DriverInfos[buf_name] = GetDriverInfo(buf_name);
-            m_DeviceInfos[buf_name] = GetDeviceInfo(buf_name);
-            m_SyncInfo[buf_name] = GetSyncInfo(buf_name);
-
-            auto result_ptr = mmap(nullptr, GetBufferSize(buf_name), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-            if (result_ptr == MAP_FAILED)
-            {
-                throw std::runtime_error("Failed to mmap buffer " + buf_name);
-            }
-            m_BufferPtr[buf_name] = static_cast<std::byte *>(result_ptr);
-        }
     }
 
     UDmaBuffer::~UDmaBuffer()
     {
-        // first unmap buffers
-        for (auto &[buf_name, ptr] : m_BufferPtr)
+        // unmap
+        for (auto &kv : m_Buffers)
         {
-            if (ptr != nullptr)
+            auto &entry = kv.second;
+            if (entry.ptr != nullptr && entry.size > 0)
             {
-                munmap(ptr, GetBufferSize(buf_name));
-                ptr = nullptr;
+                ::munmap(entry.ptr, entry.size);
+                entry.ptr = nullptr;
             }
         }
+
         // then free allocated buffers
-        for (auto &[buf_name, fd] : m_BufferFds)
+        for (auto &kv : m_Buffers)
         {
-            if (fd >= 0)
+            auto &entry = kv.second;
+            if (entry.fd >= 0)
             {
-                ::close(fd);
-                fd = -1;
+                ::close(entry.fd);
+                entry.fd = -1;
             }
         }
     }
 
-    bool UDmaBuffer::CreateBuffer(UDmaBufferAllocate::UdmaBufConfig buffer_vec, CachePolicy cache_policy, uint8_t quirk_mmap_mode)
+    bool UDmaBuffer::CreateBuffer(const UDmaBufferAllocate::UdmaBufConfig &cfg, uint8_t quirk_mmap_mode)
     {
+
         auto allocated_buffers = m_BufferAllocator->GetAllocatedBuffers();
         if (allocated_buffers.size() == 0)
         {
-            if (!m_BufferAllocator->AllocateBuffers(buffer_vec, quirk_mmap_mode))
+            if (!m_BufferAllocator->AllocateBuffers(cfg, quirk_mmap_mode))
             {
                 SPDLOG_ERROR("Failed to allocate DMA buffers");
                 return false;
@@ -99,9 +61,110 @@ namespace Dma
             }
         }
 
-        for (size_t i = 0; i < allocated_buffers.size(); ++i)
+        for (const auto &buf_name : allocated_buffers)
         {
-            m_BufferFds[allocated_buffers[i]] = -1;
+            BufferEntry entry{};
+            const std::string dev_path = "/dev/" + buf_name;
+            int open_flags = O_RDWR;
+            if (m_Policy == CachePolicy::NonCached)
+            {
+                open_flags |= O_SYNC;
+            }
+
+            entry.fd = ::open(dev_path.c_str(), open_flags);
+            if (entry.fd < 0)
+            {
+                SPDLOG_ERROR("UDmaBuffer: failed to open {}: {}", dev_path, strerror(errno));
+                return false;
+            }
+
+            // get size
+            if (ioctl(entry.fd, U_DMA_BUF_IOCTL_GET_SIZE, &entry.size) < 0 || entry.size == 0)
+            {
+                SPDLOG_ERROR("UDmaBuffer: failed to get size for {}: {}", dev_path, strerror(errno));
+                ::close(entry.fd);
+                return false;
+            }
+
+            // get physical address
+            if (ioctl(entry.fd, U_DMA_BUF_IOCTL_GET_DMA_ADDR, &entry.phys_addr) < 0)
+            {
+                SPDLOG_ERROR("UDmaBuffer: failed to get physical address for {}: {}", dev_path, strerror(errno));
+                ::close(entry.fd);
+                return false;
+            }
+
+            // get driver info
+            {
+                u_dma_buf_ioctl_drv_info drv{};
+                if (::ioctl(entry.fd, U_DMA_BUF_IOCTL_GET_DRV_INFO, &drv) == 0)
+                {
+                    entry.driver = {
+                        GET_U_DMA_BUF_IOCTL_FLAGS_IOCTL_VERSION(&drv),
+                        GET_U_DMA_BUF_IOCTL_FLAGS_IN_KERNEL_FUNCTIONS(&drv),
+                        GET_U_DMA_BUF_IOCTL_FLAGS_USE_OF_DMA_CONFIG(&drv),
+                        GET_U_DMA_BUF_IOCTL_FLAGS_USE_OF_RESERVED_MEM(&drv),
+                        GET_U_DMA_BUF_IOCTL_FLAGS_USE_QUIRK_MMAP(&drv),
+                        GET_U_DMA_BUF_IOCTL_FLAGS_USE_QUIRK_MMAP_PAGE(&drv),
+                        std::string(drv.version)};
+                }
+                else
+                {
+                    SPDLOG_WARN("UDmaBuffer: failed to get driver info for {}: {}", buf_name, strerror(errno));
+                }
+            }
+
+            // device info
+            {
+                u_dma_buf_ioctl_dev_info dev{};
+                if (::ioctl(entry.fd, U_DMA_BUF_IOCTL_GET_DEV_INFO, &dev) == 0)
+                {
+                    entry.device = {
+                        GET_U_DMA_BUF_IOCTL_FLAGS_DMA_MASK(&dev),
+                        GET_U_DMA_BUF_IOCTL_FLAGS_DMA_COHERENT(&dev),
+                        GET_U_DMA_BUF_IOCTL_FLAGS_MMAP_MODE(&dev)};
+                }
+                else
+                {
+                    SPDLOG_WARN("UDmaBuffer: failed to get device info for {}: {}", buf_name, strerror(errno));
+                }
+            }
+
+            // sync info
+            {
+                u_dma_buf_ioctl_sync_args sa{};
+                if (::ioctl(entry.fd, U_DMA_BUF_IOCTL_GET_SYNC, &sa) == 0)
+                {
+                    entry.sync = {
+                        sa.offset,
+                        sa.size,
+                        GET_U_DMA_BUF_IOCTL_FLAGS_SYNC_DIR(&sa),
+                        GET_U_DMA_BUF_IOCTL_FLAGS_SYNC_OWNER(&sa),
+                        GET_U_DMA_BUF_IOCTL_FLAGS_SYNC_MODE(&sa),
+                    };
+                }
+                else
+                {
+                    entry.sync = {};
+                }
+            }
+
+            // mmap
+            void *p = ::mmap(nullptr,
+                             entry.size,
+                             PROT_READ | PROT_WRITE,
+                             MAP_SHARED,
+                             entry.fd,
+                             0);
+            if (p == MAP_FAILED)
+            {
+                SPDLOG_ERROR("UDmaBuffer: mmap failed for {}: {}", buf_name, strerror(errno));
+                ::close(entry.fd);
+                return false;
+            }
+            entry.ptr = static_cast<std::byte *>(p);
+
+            m_Buffers[buf_name] = entry;
         }
 
         return true;
@@ -109,31 +172,51 @@ namespace Dma
 
     std::vector<std::string> UDmaBuffer::GetAllocatedBuffers() const
     {
-        return m_BufferAllocator->GetAllocatedBuffers();
+        std::vector<std::string> out;
+        out.reserve(m_Buffers.size());
+        for (const auto &kv : m_Buffers)
+        {
+            out.push_back(kv.first);
+        }
+        return out;
     }
 
     std::byte *UDmaBuffer::BufferPtr(std::string buffer_name) const
     {
-        if (m_BufferFds.find(buffer_name) == m_BufferFds.end())
+        auto it = m_Buffers.find(buffer_name);
+        if (it == m_Buffers.end())
         {
-            SPDLOG_ERROR("Invalid buffer name: {}", buffer_name);
+            SPDLOG_ERROR("BufferPtr: invalid buffer name: {}", buffer_name);
             return nullptr;
         }
-
-        return m_BufferPtr.at(buffer_name);
+        return it->second.ptr;
     }
 
     void UDmaBuffer::InvalidateCache(std::string buffer_name)
     {
-        uint64_t sync_for_cpu{1};
-        if (ioctl(m_BufferFds.at(buffer_name), U_DMA_BUF_IOCTL_SET_SYNC_FOR_CPU, &sync_for_cpu) < 0)
+        auto it = m_Buffers.find(buffer_name);
+        if (it == m_Buffers.end())
         {
-            SPDLOG_ERROR("Failed to invalidate cache for {}", m_Devicepath);
+            SPDLOG_ERROR("InvalidateCache: invalid buffer name: {}", buffer_name);
+            return;
+        }
+
+        uint64_t sync_for_cpu{1};
+        if (::ioctl(it->second.fd, U_DMA_BUF_IOCTL_SET_SYNC_FOR_CPU, &sync_for_cpu) < 0)
+        {
+            SPDLOG_ERROR("Failed to invalidate cache for {}", buffer_name);
         }
     }
 
     void UDmaBuffer::InvalidateCache(std::string buffer_name, std::size_t offset, std::size_t size, SyncDirection sync_direction)
     {
+        auto it = m_Buffers.find(buffer_name);
+        if (it == m_Buffers.end())
+        {
+            SPDLOG_ERROR("InvalidateCache(offset): invalid buffer name: {}", buffer_name);
+            return;
+        }
+
         std::size_t sync_offset = offset;
         std::size_t sync_size = size;
         uint32_t sync_dir = static_cast<uint32_t>(sync_direction);
@@ -141,9 +224,9 @@ namespace Dma
                                 ((uint64_t)(sync_size & 0xFFFFFFF0) << 0) |
                                 ((uint64_t)(sync_dir & 0x00000003) << 2) |
                                 0x00000001;
-        if (ioctl(m_BufferFds.at(buffer_name), U_DMA_BUF_IOCTL_SET_SYNC_FOR_CPU, &sync_for_cpu) < 0)
+        if (::ioctl(it->second.fd, U_DMA_BUF_IOCTL_SET_SYNC_FOR_CPU, &sync_for_cpu) < 0)
         {
-            SPDLOG_ERROR("Failed to invalidate cache for {}", m_Devicepath);
+            SPDLOG_ERROR("Failed to invalidate cache for {}", buffer_name);
         }
     }
 
@@ -151,16 +234,33 @@ namespace Dma
     {
         if (m_Policy == CachePolicy::Cached)
         {
-            uint64_t sync_for_device = 1;
-            if (ioctl(m_BufferFds[buffer_name], U_DMA_BUF_IOCTL_SET_SYNC_FOR_DEVICE, &sync_for_device) < 0)
+            auto it = m_Buffers.find(buffer_name);
+            if (it == m_Buffers.end())
             {
-                SPDLOG_ERROR("Failed to flush cache for {}", m_Devicepath);
+                SPDLOG_ERROR("FlushCache: invalid buffer name: {}", buffer_name);
+                return;
+            }
+
+            uint64_t sync_for_device = 1;
+            if (::ioctl(it->second.fd, U_DMA_BUF_IOCTL_SET_SYNC_FOR_DEVICE, &sync_for_device) < 0)
+            {
+                SPDLOG_ERROR("Failed to flush cache for {}", buffer_name);
             }
         }
     }
 
     void UDmaBuffer::FlushCache(std::string buffer_name, std::size_t offset, std::size_t size, SyncDirection sync_direction)
     {
+        if (m_Policy == CachePolicy::NonCached)
+            return;
+
+        auto it = m_Buffers.find(buffer_name);
+        if (it == m_Buffers.end())
+        {
+            SPDLOG_ERROR("FlushCache(offset): invalid buffer name: {}", buffer_name);
+            return;
+        }
+
         std::size_t sync_offset = offset;
         std::size_t sync_size = size;
         uint32_t sync_dir = static_cast<uint32_t>(sync_direction);
@@ -168,18 +268,25 @@ namespace Dma
                                    ((uint64_t)(sync_size & 0xFFFFFFF0) << 0) |
                                    ((uint64_t)(sync_dir & 0x00000003) << 2) |
                                    0x00000001;
-        if (ioctl(m_BufferFds.at(buffer_name), U_DMA_BUF_IOCTL_SET_SYNC_FOR_DEVICE, &sync_for_device) < 0)
+        if (::ioctl(it->second.fd, U_DMA_BUF_IOCTL_SET_SYNC_FOR_DEVICE, &sync_for_device) < 0)
         {
-            SPDLOG_ERROR("Failed to flush cache for {}", m_Devicepath);
+            SPDLOG_ERROR("Failed to flush cache for {}", buffer_name);
         }
     }
 
     int UDmaBuffer::GetSyncOwner(std::string buffer_name) const
     {
-        int owner{0};
-        if (ioctl(m_BufferFds.at(buffer_name), U_DMA_BUF_IOCTL_GET_SYNC_OWNER, &owner) < 0)
+        auto it = m_Buffers.find(buffer_name);
+        if (it == m_Buffers.end())
         {
-            SPDLOG_ERROR("Failed to get sync owner from {}", m_Devicepath);
+            SPDLOG_ERROR("GetSyncOwner: invalid buffer name: {}", buffer_name);
+            return -1;
+        }
+
+        int owner{0};
+        if (::ioctl(it->second.fd, U_DMA_BUF_IOCTL_GET_SYNC_OWNER, &owner) < 0)
+        {
+            SPDLOG_ERROR("Failed to get sync owner from {}", buffer_name);
             return -1;
         }
         return owner;
@@ -187,10 +294,16 @@ namespace Dma
 
     uint64_t UDmaBuffer::GetPhysicalAddress(std::string buffer_name) const
     {
-        uint64_t phys_addr{0};
-        if (ioctl(m_BufferFds.at(buffer_name), U_DMA_BUF_IOCTL_GET_DMA_ADDR, &phys_addr) < 0)
+        auto it = m_Buffers.find(buffer_name);
+        if (it == m_Buffers.end())
         {
-            SPDLOG_ERROR("Failed to get physical address from {}", m_Devicepath);
+            SPDLOG_ERROR("GetPhysicalAddress: invalid buffer name: {}", buffer_name);
+            return 0;
+        }
+        uint64_t phys_addr{0};
+        if (::ioctl(it->second.fd, U_DMA_BUF_IOCTL_GET_DMA_ADDR, &phys_addr) < 0)
+        {
+            SPDLOG_ERROR("Failed to get physical address from {}", buffer_name);
             return 0;
         }
         return phys_addr;
@@ -198,17 +311,32 @@ namespace Dma
 
     std::size_t UDmaBuffer::GetBufferSize(std::string buffer_name) const
     {
-        std::size_t buf_size{0};
-        if (ioctl(m_BufferFds.at(buffer_name), U_DMA_BUF_IOCTL_GET_SIZE, &buf_size) < 0 || buf_size == 0)
+        auto it = m_Buffers.find(buffer_name);
+        if (it == m_Buffers.end())
         {
-            SPDLOG_ERROR("Failed to get buffer size from {}", m_Devicepath);
+            SPDLOG_ERROR("GetBufferSize: invalid buffer name: {}", buffer_name);
             return 0;
         }
+
+        std::size_t buf_size{0};
+        if (::ioctl(it->second.fd, U_DMA_BUF_IOCTL_GET_SIZE, &buf_size) < 0 || buf_size == 0)
+        {
+            SPDLOG_ERROR("Failed to get buffer size from {}", buffer_name);
+            return 0;
+        }
+
         return buf_size;
     }
 
     void UDmaBuffer::SetSyncInfo(std::string buffer_name, uint64_t offset, uint64_t size, SyncDirection sync_direction)
     {
+        auto it = m_Buffers.find(buffer_name);
+        if (it == m_Buffers.end())
+        {
+            SPDLOG_ERROR("SetSyncInfo: invalid buffer name: {}", buffer_name);
+            return;
+        }
+
         u_dma_buf_ioctl_sync_args sync_args = {0};
         sync_args.offset = offset;
         sync_args.size = size;
@@ -216,20 +344,36 @@ namespace Dma
 
         SET_U_DMA_BUF_IOCTL_FLAGS_SYNC_DIR(&sync_args, sync_dir);
 
-        if (ioctl(m_BufferFds.at(buffer_name), U_DMA_BUF_IOCTL_SET_SYNC, &sync_args) < 0)
+        if (::ioctl(it->second.fd, U_DMA_BUF_IOCTL_SET_SYNC, &sync_args) < 0)
         {
-            SPDLOG_ERROR("Failed to set sync info for {}", m_Devicepath);
+            SPDLOG_ERROR("Failed to set sync info for {}", buffer_name);
+            return;
         }
+
+        // update cached copy
+        it->second.sync = {
+            sync_args.offset,
+            sync_args.size,
+            GET_U_DMA_BUF_IOCTL_FLAGS_SYNC_DIR(&sync_args),
+            GET_U_DMA_BUF_IOCTL_FLAGS_SYNC_OWNER(&sync_args),
+            GET_U_DMA_BUF_IOCTL_FLAGS_SYNC_MODE(&sync_args)};
     }
 
     UDmaBuffer::SyncInfo UDmaBuffer::GetSyncInfo(std::string buffer_name) const
     {
+        auto it = m_Buffers.find(buffer_name);
+        if (it == m_Buffers.end())
+        {
+            SPDLOG_ERROR("GetSyncInfo: invalid buffer name: {}", buffer_name);
+            return {};
+        }
+
         // This ioctl is for get owner of the memory block in the manual cache management mode. If this value is 1, the buffer is owned by the device.
         // If this value is 0, the buffer is owned by the cpu.
         u_dma_buf_ioctl_sync_args sync_args = {0};
-        if (ioctl(m_BufferFds.at(buffer_name), U_DMA_BUF_IOCTL_GET_SYNC, &sync_args) < 0)
+        if (::ioctl(it->second.fd, U_DMA_BUF_IOCTL_GET_SYNC, &sync_args) < 0)
         {
-            SPDLOG_ERROR("Failed to get sync info from {}", m_Devicepath);
+            SPDLOG_ERROR("Failed to get sync info from {}", buffer_name);
             return {};
         }
 
@@ -243,11 +387,18 @@ namespace Dma
 
     UDmaBuffer::DeviceInfo UDmaBuffer::GetDeviceInfo(std::string buffer_name) const
     {
+        auto it = m_Buffers.find(buffer_name);
+        if (it == m_Buffers.end())
+        {
+            SPDLOG_ERROR("GetDeviceInfo: invalid buffer name: {}", buffer_name);
+            return {};
+        }
+
         u_dma_buf_ioctl_dev_info dev_info{0};
 
-        if (ioctl(m_BufferFds.at(buffer_name), U_DMA_BUF_IOCTL_GET_DEV_INFO, &dev_info) < 0)
+        if (ioctl(it->second.fd, U_DMA_BUF_IOCTL_GET_DEV_INFO, &dev_info) < 0)
         {
-            SPDLOG_ERROR("Failed to get device info from {}", m_Devicepath);
+            SPDLOG_ERROR("Failed to get device info from {}", buffer_name);
             return {};
         }
 
@@ -259,11 +410,18 @@ namespace Dma
 
     UDmaBuffer::DriverInfo UDmaBuffer::GetDriverInfo(std::string buffer_name) const
     {
+        auto it = m_Buffers.find(buffer_name);
+        if (it == m_Buffers.end())
+        {
+            SPDLOG_ERROR("GetDriverInfo: invalid buffer name: {}", buffer_name);
+            return {};
+        }
+
         u_dma_buf_ioctl_drv_info drv_info{0};
 
-        if (ioctl(m_BufferFds.at(buffer_name), U_DMA_BUF_IOCTL_GET_DRV_INFO, &drv_info) < 0)
+        if (ioctl(it->second.fd, U_DMA_BUF_IOCTL_GET_DRV_INFO, &drv_info) < 0)
         {
-            SPDLOG_ERROR("Failed to get driver info from {}", m_Devicepath);
+            SPDLOG_ERROR("Failed to get driver info from {}", buffer_name);
             return {};
         }
 
@@ -279,13 +437,14 @@ namespace Dma
 
     void UDmaBuffer::PrintDriverInfo(const std::string buffer_name) const
     {
-        if (m_DriverInfos.find(buffer_name) == m_DriverInfos.end())
+        auto it = m_Buffers.find(buffer_name);
+        if (it == m_Buffers.end())
         {
-            SPDLOG_ERROR("Invalid buffer name");
+            SPDLOG_ERROR("PrintDriverInfo: invalid buffer name: {}", buffer_name);
             return;
         }
 
-        const auto &info = m_DriverInfos.at(buffer_name);
+        const auto &info = it->second.driver;
         SPDLOG_DEBUG("Driver Info for Buffer {}:", buffer_name);
         SPDLOG_DEBUG("  Version: {}", info.Version);
         SPDLOG_DEBUG("  IOC Version: {}", info.IocVersion);
@@ -298,13 +457,14 @@ namespace Dma
 
     void UDmaBuffer::PrintDeviceInfo(const std::string buffer_name) const
     {
-        if (m_DeviceInfos.find(buffer_name) == m_DeviceInfos.end())
+        auto it = m_Buffers.find(buffer_name);
+        if (it == m_Buffers.end())
         {
-            SPDLOG_ERROR("Invalid buffer name");
+            SPDLOG_ERROR("PrintDeviceInfo: invalid buffer name: {}", buffer_name);
             return;
         }
 
-        const auto &info = m_DeviceInfos.at(buffer_name);
+        const auto &info = it->second.device;
         SPDLOG_DEBUG("Device Info for Buffer {}:", buffer_name);
         SPDLOG_DEBUG("  DMA Mask: {}", info.DmaMask);
         SPDLOG_DEBUG("  DMA Coherent: {}", info.DmaCoherent);
@@ -313,13 +473,14 @@ namespace Dma
 
     void UDmaBuffer::PrintSyncInfo(const std::string buffer_name) const
     {
-        if (m_SyncInfo.find(buffer_name) == m_SyncInfo.end())
+        auto it = m_Buffers.find(buffer_name);
+        if (it == m_Buffers.end())
         {
-            SPDLOG_ERROR("Invalid buffer name");
+            SPDLOG_ERROR("PrintSyncInfo: invalid buffer name: {}", buffer_name);
             return;
         }
+        const auto &info = it->second.sync;
 
-        const auto &info = m_SyncInfo.at(buffer_name);
         SPDLOG_DEBUG("Sync Info for Buffer {}:", buffer_name);
         SPDLOG_DEBUG("  Sync Offset: {}", info.SyncOffset);
         SPDLOG_DEBUG("  Sync Size: {}", info.SyncSize);
@@ -330,23 +491,24 @@ namespace Dma
 
     std::size_t UDmaBuffer::Offset(const std::string buffer_name) const
     {
-        if (m_SyncInfo.find(buffer_name) == m_SyncInfo.end())
+        auto it = m_Buffers.find(buffer_name);
+        if (it == m_Buffers.end())
         {
-            SPDLOG_ERROR("Invalid buffer name");
+            SPDLOG_ERROR("Offset: invalid buffer name: {}", buffer_name);
             return 0;
         }
-
-        return m_SyncInfo.at(buffer_name).SyncOffset;
+        return it->second.sync.SyncOffset;
     }
 
     void UDmaBuffer::PrintBuffersInfo() const
     {
-        for (const auto &[buffer_name, buffer_fd] : m_BufferFds)
+        for (const auto &kv : m_Buffers)
         {
-            SPDLOG_DEBUG("=== DMA Buffer {} Info ===", buffer_name);
-            PrintDriverInfo(buffer_name);
-            PrintDeviceInfo(buffer_name);
-            PrintSyncInfo(buffer_name);
+            const auto &name = kv.first;
+            SPDLOG_DEBUG("=== DMA Buffer {} Info ===", name);
+            PrintDriverInfo(name);
+            PrintDeviceInfo(name);
+            PrintSyncInfo(name);
             SPDLOG_DEBUG("=========================");
         }
     }

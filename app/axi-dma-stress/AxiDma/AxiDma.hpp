@@ -2,9 +2,9 @@
 
 #include <memory>
 #include <string>
-#include "Uio.hpp"
 #include "AxiDmaBdRing.hpp"
 #include "UDmaBuffer.hpp"
+#include "AxiDmaChannel.hpp"
 
 namespace Dma
 {
@@ -30,103 +30,34 @@ namespace Dma
             int BufferLengthRegister{26};
         };
 
-        enum class Direction
-        {
-            MM2S,
-            S2MM
-        };
-
     public:
-        static constexpr uint32_t MM2S_CONTROL_REGISTER = 0x00;
-        static constexpr uint32_t MM2S_STATUS_REGISTER = 0x04;
-        static constexpr uint32_t MM2S_START_ADDRESS = 0x18;
-        static constexpr uint32_t MM2S_START_ADDRESS_MSB = 0x1C;
-        static constexpr uint32_t MM2S_LENGTH = 0x28;
-
-        static constexpr uint32_t S2MM_CONTROL_REGISTER = 0x30;
-        static constexpr uint32_t S2MM_STATUS_REGISTER = 0x34;
-        static constexpr uint32_t S2MM_START_ADDRESS = 0x48;
-        static constexpr uint32_t S2MM_START_ADDRESS_MSB = 0x4C;
-        static constexpr uint32_t S2MM_LENGTH = 0x58;
-
-        struct StatusBits
-        {
-            bool halted;
-            bool idle;
-            bool sg_included;
-            bool dma_internal_error;
-            bool dma_slave_error;
-            bool dma_decode_error;
-            bool sg_internal_error;
-            bool sg_slave_error;
-            bool sg_decode_error;
-            bool ioc_irq;
-            bool dly_irq;
-            bool err_irq;
-            uint8_t irq_threshold_sts;
-            uint8_t irq_delay_sts;
-        };
-
-        struct ControlBits
-        {
-            bool rs;
-            bool reset;
-            bool keyhole;
-            bool cyclic_bd_enable;
-            bool ioc_irq_enable;
-            bool dly_irq_enable;
-            bool err_irq_enable;
-            uint8_t irq_threshold;
-            uint8_t irq_delay;
-        };
-
-        AxiDma(const std::string &uio_device, Config config);
+        AxiDma(const std::string &uio_device, Config config, UDmaBufferAllocate::UdmaBufConfig udma_buf_config, UDmaBuffer::CachePolicy cache_policy);
         ~AxiDma();
-
-        void XAxiDmaReset();
-        void XAxiDmaIntrDisable(Direction direction, std::uint32_t mask);
-        void XAxiDmaIntrEnable(Direction direction, std::uint32_t mask);
-        std::uint32_t XAxiDmaIntrGetIrq(Direction direction);
-        bool XAxiDmaSelectCyclicMode(Direction direction, bool enable);
-        bool XAxiDmaSelectKeyHoleMode(Direction direction, bool enable);
-        void XAxiDmaSetBufferAddress(Direction direction, std::uint64_t buffer_address);
-        void XAxiDmaStart(Direction direction, bool start);
-        void XAxiDmaLength(Direction direction, std::uint32_t length);
-        bool XAxiDmaIsStarted(Direction direction);
-
-        bool XAxiDmaSimpleTransfer(Direction direction, std::uint64_t buffer_address, std::uint32_t length);
-        bool XAxiDmaCyclicTransfer(Direction direction, UDmaBuffer &buffers);
-
-        void XAxiDmaWaitSync(Direction direction);
-
-        StatusBits XAxiDmaStatusRead(Direction direction);
-        void XAxiDmaPrintStatus(Direction direction);
-        ControlBits XAxiDmaControlRead(Direction direction);
-        void XAxiDmaPrintControl(Direction direction);
-
-        void XAxiDmaClearInterrupts(Direction direction);
 
         void Stop();
 
-        void AttachInterruptHandler(Direction direction, const std::function<void()> &callback, bool queue_enabled = false);
-        void DetachInterruptHandler();
+        bool XAxiDmaSimpleTransfer(std::uint64_t buffer_address, std::uint32_t length);
+        bool XAxiDmaCyclicTransfer(UDmaBuffer &buffers);
+
+        void AttachInterruptRxHandler(const std::function<void()> &callback, bool queue_enabled = false);
+        void DetachRxInterruptHandler();
+
+        void AttachInterruptTxHandler(const std::function<void()> &callback, bool queue_enabled = false);
+        void DetachTxInterruptHandler();
+
+        std::uint32_t XAxiDmaGetBdCount();
 
     private:
         std::shared_ptr<UIO> m_UioDevice;
-        std::function<void()> m_S2mmCallback;
-        std::function<void()> m_Mm2sCallback;
+        std::shared_ptr<AxiDmaChannel> m_TxChannel;
+        std::shared_ptr<AxiDmaChannel> m_RxChannel;
+        UDmaBuffer m_UdmaBuffer;
+
         Config m_Config;
         bool m_IsInitialized{false};
         XAxiDmaBdRing m_TxBdRing;
         XAxiDmaBdRing m_RxBdRing;
 
         bool InitializeConfig();
-        bool HasMM2S();
-        bool HasS2MM();
-        bool HasScatterGather();
-        bool XAxiDmaResetIsDone();
-        bool XAxiDmaBusy(Direction direction);
-
-        void OnS2mmInterrupt();
     };
 }
