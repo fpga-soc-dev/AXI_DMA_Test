@@ -21,16 +21,19 @@ namespace Dma
         static constexpr uint32_t XAXIDMA_NO_CHANGE = 0xFFFFFFFF;
         static constexpr uint32_t XAXIDMA_ALL_BDS = 0x0FFFFFFF; /* 268 Million */
     public:
-        explicit XAxiDmaBdRing(std::shared_ptr<AxiDmaChannel> channel, const UDmaBuffer &udma_buffer);
+        friend class AxiDma;
+
+        explicit XAxiDmaBdRing(std::shared_ptr<AxiDmaChannel> channel, ICacheManager *cache_manager, const std::string &bd_buffer_name);
         ~XAxiDmaBdRing();
 
+        void SetCacheManager(ICacheManager *cache_manager);
         void XAxiDmaBdRingSnapShotCurrBd();
 
         std::uint32_t XAxiDmaBdRingCntCalc(std::uint32_t alignment, std::uint32_t buffer_size);
 
         bool XAxiDmaBdRingCreate(std::uintptr_t phys_addr, std::uintptr_t virt_addr, std::uint32_t alignment, int bd_count);
         bool XAxiDmaBdRingClone(std::uint8_t *src_bd_ptr);
-        bool XAxiDmaBdRingAlloc(int num_bd, std::uint8_t **bd_ptr);
+        bool XAxiDmaBdRingAlloc(int num_bd, AxiDmaBd &bd_ptr);
         bool XAxiDmaBdRingSetCoalesce(std::uint32_t counter, std::uint32_t timer);
         bool XAxiDmaBdRingToHw(int num_bd, std::uint8_t *bd_set_ptr);
         bool XAxiDmaBdRingStart();
@@ -42,7 +45,8 @@ namespace Dma
 
     private:
         std::shared_ptr<AxiDmaChannel> m_Channel;
-        const UDmaBuffer &m_UdmaBuffer;
+        ICacheManager *m_CacheManager{nullptr};
+        std::string m_BdBufferName;
 
         bool m_IsRxChannel{false};     /* Is this a receive channel */
         volatile int m_RunState{0};    /* Whether channel is running */
@@ -64,7 +68,7 @@ namespace Dma
         AxiDmaBd m_HwTail;                   /* Last BD in the work group */
         AxiDmaBd m_PostHead;                 /* First BD in the post-work group */
         AxiDmaBd m_BdRestart;                /* BD to load when channel is started */
-        // XAxiDma_Bd *m_CyclicBd;              /* Useful for Cyclic DMA operations */
+
         int m_FreeCnt{0};   /* Number of allocatable BDs in free group */
         int m_PreCnt{0};    /* Number of BDs in pre-work group */
         int m_HwCnt{0};     /* Number of BDs in work group */
@@ -72,6 +76,9 @@ namespace Dma
         int m_AllCnt{0};    /* Total Number of BDs for channel */
         int m_RingIndex{0}; /* Ring Index */
         int m_Cyclic{0};    /* Check for cyclic DMA Mode */
+
+        void FlushBdCache(std::uint8_t *bd_ptr, int num_bd);
+        void InvalidateBdCache(std::uint8_t *bd_ptr, int num_bd);
 
         void XAxiDmaRingSeekAhead(AxiDmaBd &bd_ptr, int num_bd);
         std::uint8_t *XAxiDmaBdRingNext(const std::uint8_t *bd);

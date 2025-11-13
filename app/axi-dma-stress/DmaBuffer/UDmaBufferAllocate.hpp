@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <vector>
 #include <string_view>
+#include <mutex>
 
 namespace Dma
 {
@@ -25,18 +26,33 @@ namespace Dma
             std::vector<BufferSpec> buffer_vec;
         };
 
-        UDmaBufferAllocate() = default;
-        ~UDmaBufferAllocate();
+        static UDmaBufferAllocate &GetInstance();
+
+        UDmaBufferAllocate(const UDmaBufferAllocate &) = delete;
+        UDmaBufferAllocate &operator=(const UDmaBufferAllocate &) = delete;
+        UDmaBufferAllocate(UDmaBufferAllocate &&) = delete;
+        UDmaBufferAllocate &operator=(UDmaBufferAllocate &&) = delete;
+
         bool AllocateBuffers(uint8_t num_buffers, uint32_t size_per_buffer, uint8_t quirk_mmap_mode = 2);
         bool AllocateBuffers(UdmaBufConfig cfg, uint8_t quirk_mmap_mode = 2);
-        std::vector<std::string> GetAllocatedBuffers();
-        uint8_t GetAllocatedBuffersCount() const { return m_AllocatedBuffersCount; }
+        bool DeallocateBuffers(const std::vector<std::string> &buffer_names);
+
+        std::vector<std::string> GetAllocatedBuffers() const;
+        uint8_t GetAllocatedBuffersCount() const;
+        bool IsModuleLoaded() const;
 
     private:
-        int m_ModuleFd{-1};
-        bool m_IsAllocated{false};
-        uint8_t m_AllocatedBuffersCount{0};
+        UDmaBufferAllocate() = default;
+        ~UDmaBufferAllocate();
 
-        bool FreeBuffers();
+        int m_ModuleFd{-1};
+        bool m_IsModuleLoaded{false};
+        std::vector<std::string> m_AllAllocatedBuffers;
+        mutable std::mutex m_Mutex;
+
+        bool LoadModule();
+        bool UnloadModule();
+        bool AllocateBuffersImpl(const UdmaBufConfig &cfg, uint8_t quirk_mmap_mode);
+        std::string GetModulePath() const;
     };
 }

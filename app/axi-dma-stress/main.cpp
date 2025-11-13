@@ -11,13 +11,10 @@ void TestAxiDmaSimpleSingleChannel()
 {
     Dma::AxiDma::Config dma_config{
         .HasStsCntrlStrm = false,
-        .HasMm2s = false,
         .HasMm2sDRE = false,
         .Mm2SDataWidth = 0,
-        .HasS2mm = false,
         .HasS2mmDRE = false,
         .S2MmDataWidth = 32,
-        .HasScatterGather = false,
         .Mm2SNumChannels = 0,
         .S2MmNumChannels = 1,
         .Mm2SBurstSize = 0,
@@ -26,37 +23,43 @@ void TestAxiDmaSimpleSingleChannel()
         .AddressWidth = 32,
         .BufferLengthRegister = 26};
 
-    static constexpr uint32_t TEST_SAMPLE_COUNT = 4096u;
-    static constexpr uint32_t TEST_FRAME_INTERVAL_US = 500u;
+    static constexpr uint32_t TEST_SAMPLE_COUNT = 10u;
+    static constexpr uint32_t TEST_FRAME_INTERVAL_US = 10u;
 
     std::vector<std::vector<int>> results;
 
     AxiDataGen dataGen("data-generator-dma-simple");
     dataGen.SetConfig(TEST_SAMPLE_COUNT, TEST_FRAME_INTERVAL_US);
 
-    Dma::UDmaBufferAllocate::UdmaBufConfig buffer_vec = {
-        .buffer_vec = {
-            {0, dataGen.GetFrameSize()}}};
+    Dma::UDmaBuffer dmaBuffer(Dma::UDmaBuffer::CachePolicy::Cached);
+    uint32_t frame_size = TEST_SAMPLE_COUNT * sizeof(uint32_t);
 
-    Dma::UDmaBuffer dmaBuffer(buffer_vec, Dma::UDmaBuffer::CachePolicy::Cached);
+    Dma::UDmaBufferAllocate::UdmaBufConfig buffer_config = {
+        .buffer_vec = {{0, frame_size}}};
+
+    if (!dmaBuffer.CreateBuffer(buffer_config))
+    {
+        SPDLOG_ERROR("Failed to create DMA buffers");
+        return;
+    }
+
     Dma::AxiDma axiDma("axi-dma-simple", dma_config);
+    axiDma.InitializeSimpleModeConfig(&dmaBuffer, {"udmabuf0", frame_size}, {"", 0});
 
     std::atomic<bool> test_running{true};
     std::atomic<int> interrupt_count{0};
 
-    auto buffer_names = dmaBuffer.GetAllocatedBuffers();
-    std::string buf_name = buffer_names[0];
+    size_t frame_size_words = frame_size / sizeof(std::uint32_t);
 
-    axiDma.AttachInterruptRxHandler([&]()
+    axiDma.AttachInterruptRxHandler([&, frame_size_words]()
                                     {
         if (!test_running.load())
-        return;
-        
-        
-        dmaBuffer.InvalidateCache(buf_name);
-        std::byte *data_ptr = dmaBuffer.BufferPtr(buf_name);
+         {
+             return;
+         }
+    
+        std::byte *data_ptr = dmaBuffer.BufferPtr("udmabuf0");
         std::uint32_t *frame_data = reinterpret_cast<uint32_t *>(data_ptr);
-        size_t frame_size_words = dmaBuffer.GetBufferSize(buf_name) / sizeof(std::uint32_t);
         
         std::vector<int> current_frame;
         current_frame.reserve(frame_size_words);
@@ -69,11 +72,11 @@ void TestAxiDmaSimpleSingleChannel()
         
         interrupt_count++;
         
-        axiDma.XAxiDmaSimpleTransfer(Dma::AxiDma::Direction::S2MM, dmaBuffer.GetPhysicalAddress("udmabuf0"), dmaBuffer.GetBufferSize("udmabuf0")); }, false);
+        axiDma.XAxiDmaRxSimpleTransfer(frame_size); }, false);
 
     SPDLOG_INFO("Starting 10-second test with single frame transfers...");
 
-    axiDma.XAxiDmaSimpleTransfer(Dma::AxiDma::Direction::S2MM, dmaBuffer.GetPhysicalAddress("udmabuf0"), dmaBuffer.GetBufferSize("udmabuf0"));
+    axiDma.XAxiDmaRxSimpleTransfer(frame_size);
     dataGen.Start();
 
     std::this_thread::sleep_for(std::chrono::seconds(10));
@@ -83,7 +86,7 @@ void TestAxiDmaSimpleSingleChannel()
     SPDLOG_INFO("Average DMA IRQ interval: {:.3f} ms", dataGen.GetIntervalResultMs());
 
     test_running.store(false);
-    axiDma.DetachInterruptHandler();
+    axiDma.DetachRxInterruptHandler();
     axiDma.Stop();
     dataGen.Stop();
 
@@ -185,7 +188,7 @@ int main()
     try
     {
         TestAxiDmaSimpleSingleChannel();
-        // TestAxiDmaCyclicSingleChannel();
+        //  TestAxiDmaCyclicSingleChannel();
     }
     catch (const std::exception &e)
     {

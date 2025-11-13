@@ -1,3 +1,4 @@
+
 #include <spdlog/spdlog.h>
 #include "AxiDmaBd.hpp"
 
@@ -32,9 +33,9 @@ namespace Dma
             return false;
         }
 
-        auto reg_value = XAxiDmaBdRead(m_Base, XAXIDMA_BD_CTRL_LEN_OFFSET);
+        auto reg_value = XAxiDmaBdRead(XAXIDMA_BD_CTRL_LEN_OFFSET);
         reg_value = (reg_value & ~len_mask) | len_bytes;
-        XAxiDmaBdWrite(m_Base, XAXIDMA_BD_CTRL_LEN_OFFSET, reg_value);
+        XAxiDmaBdWrite(XAXIDMA_BD_CTRL_LEN_OFFSET, reg_value);
 
         return true;
     }
@@ -47,7 +48,7 @@ namespace Dma
             return false;
         }
 
-        const std::uint32_t has_dre = XAxiDmaBdRead(m_Base, XAXIDMA_BD_HAS_DRE_OFFSET);
+        const std::uint32_t has_dre = XAxiDmaBdRead(XAXIDMA_BD_HAS_DRE_OFFSET);
         const std::uint8_t word_len = static_cast<std::uint8_t>(has_dre & XAXIDMA_BD_WORDLEN_MASK);
 
         if (word_len != 0)
@@ -100,19 +101,19 @@ namespace Dma
     {
         if (m_Base == nullptr)
         {
-            SPDLOG_ERROR("Error set app word at offset 0x{:X}, bd base is null", offset);
+            SPDLOG_ERROR("Error set app word at offset 0x{:X}, bd base is null", index);
             return false;
         }
 
         if (XAxiDmaBdRead(XAXIDMA_BD_HAS_STSCNTRL_OFFSET) == 0)
         {
-            SPDLOG_ERROR("Error set app word at offset 0x{:X}, no stscntrl strm", offset);
+            SPDLOG_ERROR("Error set app word at offset 0x{:X}, no stscntrl strm", index);
             return false;
         }
 
         if (index >= XAXIDMA_LAST_APPWORD)
         {
-            SPDLOG_ERROR("Error set app word at invalid offset 0x{:X}", offset);
+            SPDLOG_ERROR("Error set app word at invalid offset 0x{:X}", index);
             return false;
         }
 
@@ -127,19 +128,19 @@ namespace Dma
         valid = 0;
         if (m_Base == nullptr)
         {
-            SPDLOG_ERROR("Error get app word at offset 0x{:X}, bd base is null", offset);
+            SPDLOG_ERROR("Error get app word at offset 0x{:X}, bd base is null", index);
             return 0;
         }
 
         if (XAxiDmaBdRead(XAXIDMA_BD_HAS_STSCNTRL_OFFSET) == 0)
         {
-            SPDLOG_ERROR("Error get app word at offset 0x{:X}, no stscntrl strm", offset);
+            SPDLOG_ERROR("Error get app word at offset 0x{:X}, no stscntrl strm", index);
             return 0;
         }
 
         if (index > XAXIDMA_LAST_APPWORD)
         {
-            SPDLOG_ERROR("Error get app word at invalid offset 0x{:X}", offset);
+            SPDLOG_ERROR("Error get app word at invalid offset 0x{:X}", index);
             return 0;
         }
 
@@ -156,6 +157,20 @@ namespace Dma
         reg_value |= (ctrl & XAXIDMA_BD_CTRL_ALL_MASK);
         XAxiDmaBdWrite(XAXIDMA_BD_CTRL_LEN_OFFSET, reg_value);
         return;
+    }
+
+    bool AxiDmaBd::XAxiDmaBdSetNextDescOffset(std::uint64_t phys_addr)
+    {
+        if (m_Base == nullptr)
+        {
+            SPDLOG_ERROR("Error set next desc addr 0x{:X}, bd base is null", phys_addr);
+            return false;
+        }
+
+        XAxiDmaBdWrite(XAXIDMA_BD_NDESC_OFFSET, phys_addr & 0xFFFFFFFF);
+        XAxiDmaBdWrite(XAXIDMA_BD_NDESC_MSB_OFFSET, ((phys_addr >> 32) & 0xFFFFFFFF));
+
+        return true;
     }
 
     void AxiDmaBd::XAxiDmaBdDump()
@@ -185,7 +200,7 @@ namespace Dma
             return;
         }
 
-        std::memset(m_Base, 0, XAXIDMA_BD_NUM_WORDS * sizeof(std::uint32_t));
+        std::memset(reinterpret_cast<void *>(reinterpret_cast<std::uintptr_t>(m_Base) + XAXIDMA_BD_START_CLEAR), 0, XAXIDMA_BD_NUM_WORDS);
     }
 
     std::uint32_t AxiDmaBd::XAxiDmaBdGetCtrl()
@@ -206,6 +221,16 @@ namespace Dma
             return 0;
         }
         return XAxiDmaBdRead(XAXIDMA_BD_STS_OFFSET) & XAXIDMA_BD_STS_ALL_MASK;
+    }
+
+    void AxiDmaBd::XAxiDmaBdSetSts(std::uint32_t sts)
+    {
+        if (m_Base == nullptr)
+        {
+            SPDLOG_ERROR("Error set sts 0x{:X}, bd base is null", sts);
+            return;
+        }
+        XAxiDmaBdWrite(XAXIDMA_BD_STS_OFFSET, sts);
     }
 
     std::uint32_t AxiDmaBd::XAxiDmaBdGetLength(std::uint32_t length_mask)

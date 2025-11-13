@@ -10,12 +10,15 @@ namespace Dma
     class AxiDmaBd
     {
     public:
+        static constexpr std::uint32_t BD_SIZE_BYTES = 64;
+        /**< Minimum byte alignment requirement for buffer address in Normal DMA mode */
         /** Buffer Descriptor offsets
          *  USR* fields are defined by higher level IP.
          *  setup for EMAC type devices. The first 13 words are used by hardware.
          *  All words after the 13rd word are for software use only.
          *  @{
          */
+
         static constexpr uint32_t XAXIDMA_BD_NDESC_OFFSET = 0x00;        /* Next descriptor pointer */
         static constexpr uint32_t XAXIDMA_BD_NDESC_MSB_OFFSET = 0x04;    /* Next descriptor pointer */
         static constexpr uint32_t XAXIDMA_BD_BUFA_OFFSET = 0x08;         /* Buffer address */
@@ -69,15 +72,17 @@ namespace Dma
         bool XAxiDmaBdSetLength(std::uint32_t len_bytes, std::uint32_t len_mask);
         bool XAxiDmaBdSetBufAddr(std::uint64_t phys_addr);
         bool XAxiDmaBdSetBufAddrMicroMode(std::uint64_t phys_addr);
+        bool XAxiDmaBdSetNextDescOffset(std::uint64_t phys_addr);
 
         bool XAxiDmaBdSetAppWord(std::uint32_t index, std::uint32_t value);
-        std::uint32_t XAxiDmaBdGetAppWord(std::uint32_t index, int &valid) const;
+        std::uint32_t XAxiDmaBdGetAppWord(std::uint32_t index, int &valid);
         void XAxiDmaBdSetCtrl(std::uint32_t ctrl);
 
         void XAxiDmaBdDump();
         void XAxiDmaBdClear();
         std::uint32_t XAxiDmaBdGetCtrl();
         std::uint32_t XAxiDmaBdGetSts();
+        void XAxiDmaBdSetSts(std::uint32_t sts);
         std::uint32_t XAxiDmaBdGetLength(std::uint32_t length_mask);
         void XAxiDmaBdSetId(std::uint32_t id);
         bool XAxiDmaBdHwCompleted();

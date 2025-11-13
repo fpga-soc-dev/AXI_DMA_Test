@@ -11,177 +11,198 @@
 namespace Dma
 {
 
-    UDmaBuffer::UDmaBuffer(CachePolicy cache_policy) : m_Policy(cache_policy), m_BufferAllocator(std::make_unique<UDmaBufferAllocate>())
+    UDmaBuffer::UDmaBuffer(CachePolicy cache_policy) : m_Policy(cache_policy)
     {
     }
 
     UDmaBuffer::~UDmaBuffer()
     {
-        // unmap
-        for (auto &kv : m_Buffers)
-        {
-            auto &entry = kv.second;
-            if (entry.ptr != nullptr && entry.size > 0)
-            {
-                ::munmap(entry.ptr, entry.size);
-                entry.ptr = nullptr;
-            }
-        }
+        DeAllocateBuffers();
+    }
 
-        // then free allocated buffers
-        for (auto &kv : m_Buffers)
+    UDmaBuffer::UDmaBuffer(UDmaBuffer &&other) noexcept
+        : m_Policy(other.m_Policy), m_AllocatedBufferNames(std::move(other.m_AllocatedBufferNames)), m_Buffers(std::move(other.m_Buffers))
+    {
+        other.m_AllocatedBufferNames.clear();
+        other.m_Buffers.clear();
+    }
+
+    UDmaBuffer &UDmaBuffer::operator=(UDmaBuffer &&other) noexcept
+    {
+        if (this != &other)
         {
-            auto &entry = kv.second;
-            if (entry.fd >= 0)
-            {
-                ::close(entry.fd);
-                entry.fd = -1;
-            }
+            DeAllocateBuffers();
+            m_Policy = other.m_Policy;
+            m_AllocatedBufferNames = std::move(other.m_AllocatedBufferNames);
+            m_Buffers = std::move(other.m_Buffers);
+            other.m_AllocatedBufferNames.clear();
+            other.m_Buffers.clear();
         }
+        return *this;
     }
 
     bool UDmaBuffer::CreateBuffer(const UDmaBufferAllocate::UdmaBufConfig &cfg, uint8_t quirk_mmap_mode)
     {
+        auto &allocator = UDmaBufferAllocate::GetInstance();
 
-        auto allocated_buffers = m_BufferAllocator->GetAllocatedBuffers();
-        if (allocated_buffers.size() == 0)
+        if (!allocator.AllocateBuffers(cfg, quirk_mmap_mode))
         {
-            if (!m_BufferAllocator->AllocateBuffers(cfg, quirk_mmap_mode))
-            {
-                SPDLOG_ERROR("Failed to allocate DMA buffers");
-                return false;
-            }
-            allocated_buffers = m_BufferAllocator->GetAllocatedBuffers();
-        }
-        else
-        {
-            for (const auto &buf_name : allocated_buffers)
-            {
-                SPDLOG_INFO("Found already allocated buffer: {}", buf_name);
-            }
+            SPDLOG_ERROR("Failed to allocate buffers through singleton allocator");
+            return false;
         }
 
-        for (const auto &buf_name : allocated_buffers)
+        std::vector<std::string> buffer_names;
+        for (const auto &spec : cfg.buffer_vec)
         {
-            BufferEntry entry{};
-            const std::string dev_path = "/dev/" + buf_name;
-            int open_flags = O_RDWR;
-            if (m_Policy == CachePolicy::NonCached)
-            {
-                open_flags |= O_SYNC;
-            }
+            buffer_names.push_back("udmabuf" + std::to_string(spec.index));
+        }
 
-            entry.fd = ::open(dev_path.c_str(), open_flags);
-            if (entry.fd < 0)
+        bool all_success = true;
+        for (const auto &buffer_name : buffer_names)
+        {
+            if (!OpenAndMapBuffer(buffer_name))
             {
-                SPDLOG_ERROR("UDmaBuffer: failed to open {}: {}", dev_path, strerror(errno));
-                return false;
+                all_success = false;
+                break;
             }
+            m_AllocatedBufferNames.push_back(buffer_name);
+        }
 
-            // get size
-            if (ioctl(entry.fd, U_DMA_BUF_IOCTL_GET_SIZE, &entry.size) < 0 || entry.size == 0)
-            {
-                SPDLOG_ERROR("UDmaBuffer: failed to get size for {}: {}", dev_path, strerror(errno));
-                ::close(entry.fd);
-                return false;
-            }
-
-            // get physical address
-            if (ioctl(entry.fd, U_DMA_BUF_IOCTL_GET_DMA_ADDR, &entry.phys_addr) < 0)
-            {
-                SPDLOG_ERROR("UDmaBuffer: failed to get physical address for {}: {}", dev_path, strerror(errno));
-                ::close(entry.fd);
-                return false;
-            }
-
-            // get driver info
-            {
-                u_dma_buf_ioctl_drv_info drv{};
-                if (::ioctl(entry.fd, U_DMA_BUF_IOCTL_GET_DRV_INFO, &drv) == 0)
-                {
-                    entry.driver = {
-                        GET_U_DMA_BUF_IOCTL_FLAGS_IOCTL_VERSION(&drv),
-                        GET_U_DMA_BUF_IOCTL_FLAGS_IN_KERNEL_FUNCTIONS(&drv),
-                        GET_U_DMA_BUF_IOCTL_FLAGS_USE_OF_DMA_CONFIG(&drv),
-                        GET_U_DMA_BUF_IOCTL_FLAGS_USE_OF_RESERVED_MEM(&drv),
-                        GET_U_DMA_BUF_IOCTL_FLAGS_USE_QUIRK_MMAP(&drv),
-                        GET_U_DMA_BUF_IOCTL_FLAGS_USE_QUIRK_MMAP_PAGE(&drv),
-                        std::string(drv.version)};
-                }
-                else
-                {
-                    SPDLOG_WARN("UDmaBuffer: failed to get driver info for {}: {}", buf_name, strerror(errno));
-                }
-            }
-
-            // device info
-            {
-                u_dma_buf_ioctl_dev_info dev{};
-                if (::ioctl(entry.fd, U_DMA_BUF_IOCTL_GET_DEV_INFO, &dev) == 0)
-                {
-                    entry.device = {
-                        GET_U_DMA_BUF_IOCTL_FLAGS_DMA_MASK(&dev),
-                        GET_U_DMA_BUF_IOCTL_FLAGS_DMA_COHERENT(&dev),
-                        GET_U_DMA_BUF_IOCTL_FLAGS_MMAP_MODE(&dev)};
-                }
-                else
-                {
-                    SPDLOG_WARN("UDmaBuffer: failed to get device info for {}: {}", buf_name, strerror(errno));
-                }
-            }
-
-            // sync info
-            {
-                u_dma_buf_ioctl_sync_args sa{};
-                if (::ioctl(entry.fd, U_DMA_BUF_IOCTL_GET_SYNC, &sa) == 0)
-                {
-                    entry.sync = {
-                        sa.offset,
-                        sa.size,
-                        GET_U_DMA_BUF_IOCTL_FLAGS_SYNC_DIR(&sa),
-                        GET_U_DMA_BUF_IOCTL_FLAGS_SYNC_OWNER(&sa),
-                        GET_U_DMA_BUF_IOCTL_FLAGS_SYNC_MODE(&sa),
-                    };
-                }
-                else
-                {
-                    entry.sync = {};
-                }
-            }
-
-            // mmap
-            void *p = ::mmap(nullptr,
-                             entry.size,
-                             PROT_READ | PROT_WRITE,
-                             MAP_SHARED,
-                             entry.fd,
-                             0);
-            if (p == MAP_FAILED)
-            {
-                SPDLOG_ERROR("UDmaBuffer: mmap failed for {}: {}", buf_name, strerror(errno));
-                ::close(entry.fd);
-                return false;
-            }
-            entry.ptr = static_cast<std::byte *>(p);
-
-            m_Buffers[buf_name] = entry;
+        if (!all_success)
+        {
+            DeAllocateBuffers();
+            return false;
         }
 
         return true;
     }
 
-    std::vector<std::string> UDmaBuffer::GetAllocatedBuffers() const
+    void UDmaBuffer::DeAllocateBuffers()
     {
-        std::vector<std::string> out;
-        out.reserve(m_Buffers.size());
-        for (const auto &kv : m_Buffers)
+        for (const auto &buffer_name : m_AllocatedBufferNames)
         {
-            out.push_back(kv.first);
+            UnmapAndCloseBuffer(buffer_name);
         }
-        return out;
+
+        if (!m_AllocatedBufferNames.empty())
+        {
+            auto &allocator = UDmaBufferAllocate::GetInstance();
+            allocator.DeallocateBuffers(m_AllocatedBufferNames);
+            m_AllocatedBufferNames.clear();
+        }
+
+        m_Buffers.clear();
     }
 
-    std::byte *UDmaBuffer::BufferPtr(std::string buffer_name) const
+    bool UDmaBuffer::OpenAndMapBuffer(const std::string &buffer_name)
+    {
+        BufferEntry entry{};
+        const std::string dev_path = "/dev/" + buffer_name;
+        int open_flags = O_RDWR;
+
+        if (m_Policy == CachePolicy::NonCached)
+        {
+            open_flags |= O_SYNC;
+        }
+
+        entry.fd = ::open(dev_path.c_str(), open_flags);
+        if (entry.fd < 0)
+        {
+            SPDLOG_ERROR("UDmaBuffer: failed to open {}: {}", dev_path, strerror(errno));
+            return false;
+        }
+
+        if (ioctl(entry.fd, U_DMA_BUF_IOCTL_GET_SIZE, &entry.size) < 0 || entry.size == 0)
+        {
+            SPDLOG_ERROR("UDmaBuffer: failed to get size for {}: {}", dev_path, strerror(errno));
+            ::close(entry.fd);
+            return false;
+        }
+
+        if (ioctl(entry.fd, U_DMA_BUF_IOCTL_GET_DMA_ADDR, &entry.phys_addr) < 0)
+        {
+            SPDLOG_ERROR("UDmaBuffer: failed to get physical address for {}: {}", dev_path, strerror(errno));
+            ::close(entry.fd);
+            return false;
+        }
+
+        {
+            u_dma_buf_ioctl_drv_info drv{};
+            if (::ioctl(entry.fd, U_DMA_BUF_IOCTL_GET_DRV_INFO, &drv) == 0)
+            {
+                entry.driver = {
+                    GET_U_DMA_BUF_IOCTL_FLAGS_IOCTL_VERSION(&drv),
+                    GET_U_DMA_BUF_IOCTL_FLAGS_IN_KERNEL_FUNCTIONS(&drv),
+                    GET_U_DMA_BUF_IOCTL_FLAGS_USE_OF_DMA_CONFIG(&drv),
+                    GET_U_DMA_BUF_IOCTL_FLAGS_USE_OF_RESERVED_MEM(&drv),
+                    GET_U_DMA_BUF_IOCTL_FLAGS_USE_QUIRK_MMAP(&drv),
+                    GET_U_DMA_BUF_IOCTL_FLAGS_USE_QUIRK_MMAP_PAGE(&drv),
+                    std::string(drv.version)};
+            }
+            else
+            {
+                SPDLOG_WARN("UDmaBuffer: failed to get driver info for {}: {}", buffer_name, strerror(errno));
+            }
+        }
+
+        {
+            u_dma_buf_ioctl_dev_info dev{};
+            if (::ioctl(entry.fd, U_DMA_BUF_IOCTL_GET_DEV_INFO, &dev) == 0)
+            {
+                entry.device = {
+                    GET_U_DMA_BUF_IOCTL_FLAGS_DMA_MASK(&dev),
+                    GET_U_DMA_BUF_IOCTL_FLAGS_DMA_COHERENT(&dev),
+                    GET_U_DMA_BUF_IOCTL_FLAGS_MMAP_MODE(&dev)};
+            }
+            else
+            {
+                SPDLOG_WARN("UDmaBuffer: failed to get device info for {}: {}", buffer_name, strerror(errno));
+            }
+        }
+
+        {
+            u_dma_buf_ioctl_sync_args sa{};
+            if (::ioctl(entry.fd, U_DMA_BUF_IOCTL_GET_SYNC, &sa) == 0)
+            {
+                entry.sync = {
+                    sa.offset,
+                    sa.size,
+                    GET_U_DMA_BUF_IOCTL_FLAGS_SYNC_DIR(&sa),
+                    GET_U_DMA_BUF_IOCTL_FLAGS_SYNC_OWNER(&sa),
+                    GET_U_DMA_BUF_IOCTL_FLAGS_SYNC_MODE(&sa),
+                };
+            }
+            else
+            {
+                entry.sync = {};
+            }
+        }
+
+        void *p = ::mmap(nullptr,
+                         entry.size,
+                         PROT_READ | PROT_WRITE,
+                         MAP_SHARED,
+                         entry.fd,
+                         0);
+        if (p == MAP_FAILED)
+        {
+            SPDLOG_ERROR("UDmaBuffer: mmap failed for {}: {}", buffer_name, strerror(errno));
+            ::close(entry.fd);
+            return false;
+        }
+        entry.ptr = static_cast<std::byte *>(p);
+
+        m_Buffers[buffer_name] = entry;
+        SPDLOG_DEBUG("Mapped buffer {} - size: {}, phys: 0x{:X}", buffer_name, entry.size, entry.phys_addr);
+        return true;
+    }
+
+    std::vector<std::string> UDmaBuffer::GetAllocatedBuffers() const
+    {
+        return m_AllocatedBufferNames;
+    }
+
+    std::byte *UDmaBuffer::BufferPtr(const std::string &buffer_name) const
     {
         auto it = m_Buffers.find(buffer_name);
         if (it == m_Buffers.end())
@@ -192,7 +213,7 @@ namespace Dma
         return it->second.ptr;
     }
 
-    void UDmaBuffer::InvalidateCache(std::string buffer_name)
+    void UDmaBuffer::InvalidateCache(const std::string &buffer_name)
     {
         auto it = m_Buffers.find(buffer_name);
         if (it == m_Buffers.end())
@@ -208,7 +229,7 @@ namespace Dma
         }
     }
 
-    void UDmaBuffer::InvalidateCache(std::string buffer_name, std::size_t offset, std::size_t size, SyncDirection sync_direction)
+    void UDmaBuffer::InvalidateCache(const std::string &buffer_name, std::size_t offset, std::size_t size, SyncDirection sync_direction)
     {
         auto it = m_Buffers.find(buffer_name);
         if (it == m_Buffers.end())
@@ -230,7 +251,7 @@ namespace Dma
         }
     }
 
-    void UDmaBuffer::FlushCache(std::string buffer_name)
+    void UDmaBuffer::FlushCache(const std::string &buffer_name)
     {
         if (m_Policy == CachePolicy::Cached)
         {
@@ -249,7 +270,7 @@ namespace Dma
         }
     }
 
-    void UDmaBuffer::FlushCache(std::string buffer_name, std::size_t offset, std::size_t size, SyncDirection sync_direction)
+    void UDmaBuffer::FlushCache(const std::string &buffer_name, std::size_t offset, std::size_t size, SyncDirection sync_direction)
     {
         if (m_Policy == CachePolicy::NonCached)
             return;
@@ -274,7 +295,7 @@ namespace Dma
         }
     }
 
-    int UDmaBuffer::GetSyncOwner(std::string buffer_name) const
+    int UDmaBuffer::GetSyncOwner(const std::string &buffer_name) const
     {
         auto it = m_Buffers.find(buffer_name);
         if (it == m_Buffers.end())
@@ -292,7 +313,7 @@ namespace Dma
         return owner;
     }
 
-    uint64_t UDmaBuffer::GetPhysicalAddress(std::string buffer_name) const
+    std::uint64_t UDmaBuffer::GetPhysicalAddress(const std::string &buffer_name) const
     {
         auto it = m_Buffers.find(buffer_name);
         if (it == m_Buffers.end())
@@ -300,7 +321,7 @@ namespace Dma
             SPDLOG_ERROR("GetPhysicalAddress: invalid buffer name: {}", buffer_name);
             return 0;
         }
-        uint64_t phys_addr{0};
+        std::uint64_t phys_addr{0};
         if (::ioctl(it->second.fd, U_DMA_BUF_IOCTL_GET_DMA_ADDR, &phys_addr) < 0)
         {
             SPDLOG_ERROR("Failed to get physical address from {}", buffer_name);
@@ -309,7 +330,7 @@ namespace Dma
         return phys_addr;
     }
 
-    std::size_t UDmaBuffer::GetBufferSize(std::string buffer_name) const
+    std::size_t UDmaBuffer::GetBufferSize(const std::string &buffer_name) const
     {
         auto it = m_Buffers.find(buffer_name);
         if (it == m_Buffers.end())
@@ -328,7 +349,7 @@ namespace Dma
         return buf_size;
     }
 
-    void UDmaBuffer::SetSyncInfo(std::string buffer_name, uint64_t offset, uint64_t size, SyncDirection sync_direction)
+    void UDmaBuffer::SetSyncInfo(const std::string &buffer_name, uint64_t offset, uint64_t size, SyncDirection sync_direction)
     {
         auto it = m_Buffers.find(buffer_name);
         if (it == m_Buffers.end())
@@ -359,7 +380,7 @@ namespace Dma
             GET_U_DMA_BUF_IOCTL_FLAGS_SYNC_MODE(&sync_args)};
     }
 
-    UDmaBuffer::SyncInfo UDmaBuffer::GetSyncInfo(std::string buffer_name) const
+    UDmaBuffer::SyncInfo UDmaBuffer::GetSyncInfo(const std::string &buffer_name) const
     {
         auto it = m_Buffers.find(buffer_name);
         if (it == m_Buffers.end())
@@ -385,7 +406,7 @@ namespace Dma
             GET_U_DMA_BUF_IOCTL_FLAGS_SYNC_MODE(&sync_args)};
     }
 
-    UDmaBuffer::DeviceInfo UDmaBuffer::GetDeviceInfo(std::string buffer_name) const
+    UDmaBuffer::DeviceInfo UDmaBuffer::GetDeviceInfo(const std::string &buffer_name) const
     {
         auto it = m_Buffers.find(buffer_name);
         if (it == m_Buffers.end())
@@ -408,7 +429,7 @@ namespace Dma
             GET_U_DMA_BUF_IOCTL_FLAGS_MMAP_MODE(&dev_info)};
     }
 
-    UDmaBuffer::DriverInfo UDmaBuffer::GetDriverInfo(std::string buffer_name) const
+    UDmaBuffer::DriverInfo UDmaBuffer::GetDriverInfo(const std::string &buffer_name) const
     {
         auto it = m_Buffers.find(buffer_name);
         if (it == m_Buffers.end())
@@ -435,7 +456,34 @@ namespace Dma
             std::string(drv_info.version)};
     }
 
-    void UDmaBuffer::PrintDriverInfo(const std::string buffer_name) const
+    void UDmaBuffer::UnmapAndCloseBuffer(const std::string &buffer_name)
+    {
+        auto it = m_Buffers.find(buffer_name);
+        if (it == m_Buffers.end())
+        {
+            return;
+        }
+
+        const auto &entry = it->second;
+        if (entry.ptr && entry.ptr != MAP_FAILED)
+        {
+            ::munmap(entry.ptr, entry.size);
+        }
+
+        if (entry.fd >= 0)
+        {
+            ::close(entry.fd);
+        }
+
+        m_Buffers.erase(it);
+    }
+
+    bool UDmaBuffer::IsBufferAllocated(const std::string &buffer_name) const
+    {
+        return std::find(m_AllocatedBufferNames.begin(), m_AllocatedBufferNames.end(), buffer_name) != m_AllocatedBufferNames.end();
+    }
+
+    void UDmaBuffer::PrintDriverInfo(const std::string &buffer_name) const
     {
         auto it = m_Buffers.find(buffer_name);
         if (it == m_Buffers.end())
@@ -455,7 +503,7 @@ namespace Dma
         SPDLOG_DEBUG("  Use Quirk Mmap Page: {}", info.UseQuirkMmapPage);
     }
 
-    void UDmaBuffer::PrintDeviceInfo(const std::string buffer_name) const
+    void UDmaBuffer::PrintDeviceInfo(const std::string &buffer_name) const
     {
         auto it = m_Buffers.find(buffer_name);
         if (it == m_Buffers.end())
@@ -471,7 +519,7 @@ namespace Dma
         SPDLOG_DEBUG("  Mmap Mode: {}", info.MmapMode);
     }
 
-    void UDmaBuffer::PrintSyncInfo(const std::string buffer_name) const
+    void UDmaBuffer::PrintSyncInfo(const std::string &buffer_name) const
     {
         auto it = m_Buffers.find(buffer_name);
         if (it == m_Buffers.end())
@@ -489,7 +537,7 @@ namespace Dma
         SPDLOG_DEBUG("  Sync Mode: {}", info.SyncMode);
     }
 
-    std::size_t UDmaBuffer::Offset(const std::string buffer_name) const
+    std::size_t UDmaBuffer::Offset(const std::string &buffer_name) const
     {
         auto it = m_Buffers.find(buffer_name);
         if (it == m_Buffers.end())

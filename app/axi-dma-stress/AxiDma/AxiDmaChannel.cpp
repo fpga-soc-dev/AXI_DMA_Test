@@ -70,7 +70,7 @@ namespace Dma
     WriteReg(XAXIDMA_CDESC_MSB_OFFSET, desc_addr >> 32);
   }
 
-  std::uint32_t XAxiDmaGetCurrentDescriptorLow() const
+  std::uint32_t AxiDmaChannel::XAxiDmaGetCurrentDescriptorLow() const
   {
     return ReadReg(XAXIDMA_CDESC_OFFSET);
   }
@@ -84,6 +84,16 @@ namespace Dma
   {
     WriteReg(XAXIDMA_TDESC_OFFSET, desc_addr & 0xFFFFFFFF);
     WriteReg(XAXIDMA_TDESC_MSB_OFFSET, desc_addr >> 32);
+  }
+
+  std::uint32_t AxiDmaChannel::XAxiDmaGetTailDescriptorLow() const
+  {
+    return ReadReg(XAXIDMA_TDESC_OFFSET);
+  }
+
+  std::uint32_t AxiDmaChannel::XAxiDmaGetTailDescriptorHigh() const
+  {
+    return ReadReg(XAXIDMA_TDESC_MSB_OFFSET);
   }
 
   void AxiDmaChannel::XAxiDmaSetSourceAddress(std::uint64_t buffer_address)
@@ -179,7 +189,12 @@ namespace Dma
     WriteReg(XAXIDMA_SR_OFFSET, XAXIDMA_IRQ_ALL_MASK);
   }
 
-  void AxiDmaChannel::XAxiDmaCDisableAllInterrupts()
+  std::uint32_t AxiDmaChannel::XAxiDmaGetAllInterrupts()
+  {
+    return ReadReg(XAXIDMA_SR_OFFSET) & XAXIDMA_IRQ_ALL_MASK;
+  }
+
+  void AxiDmaChannel::XAxiDmaDisableAllInterrupts()
   {
     auto control_reg = ReadReg(XAXIDMA_CR_OFFSET);
     control_reg &= ~XAXIDMA_IRQ_ALL_MASK;
@@ -211,67 +226,9 @@ namespace Dma
     return ReadReg(XAXIDMA_SR_OFFSET);
   }
 
-  void AxiDmaChannel::AttachInterruptHandler(const std::function<void()> &callback, bool queue_enabled)
+  void AxiDmaChannel::XAxiDmaLength(std::uint32_t length)
   {
-    if (callback == nullptr)
-    {
-      SPDLOG_ERROR("Callback function is null");
-      return;
-    }
-
-    m_Callback = callback;
-    // m_Uio->InterruptAttach([this]()
-    //                              { OnMm2sInterrupt(); },
-    //                              queue_enabled);
-
-    m_Uio->InterruptAttach([this]()
-                           { OnInterrupt(); },
-                           queue_enabled);
-  }
-
-  void AxiDmaChannel::DetachInterruptHandler()
-  {
-    m_Uio->InterruptDetach();
-    m_Callback = nullptr;
-  }
-
-  void AxiDmaChannel::OnInterrupt()
-  {
-    auto status_reg = XAxiDmaStatusRead();
-    auto irq_status = status_reg & XAXIDMA_IRQ_ALL_MASK;
-    WriteReg(XAXIDMA_SR_OFFSET, irq_status);
-
-    if (!(irq_status & XAXIDMA_IRQ_ALL_MASK))
-    {
-      return;
-    }
-
-    if ((irq_status & XAXIDMA_IRQ_ERROR_MASK))
-    {
-      if (m_Config.HasScatterGather)
-        //{
-        //  m_RxBdRing.XAxiDmaBdRingDumpRegs();
-        //}
-        // else
-        //{
-        // XAxiDmaPrintStatus(Direction::S2MM, XAxiDmaDumpStatus(Direction::S2MM, status_reg));
-        //}
-
-        XAxiDmaReset();
-
-      return;
-    }
-
-    // if (m_Config.HasScatterGather)
-    //{
-    if ((irq_status & (XAXIDMA_IRQ_DELAY_MASK | XAXIDMA_IRQ_IOC_MASK)))
-    {
-      if (m_Callback)
-      {
-        m_Callback();
-      }
-    }
-    //}
+    WriteReg(XAXIDMA_BUFFLEN_OFFSET, length);
   }
 
   void AxiDmaChannel::XAxiDmaPrintStatus()

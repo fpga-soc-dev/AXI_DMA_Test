@@ -10,7 +10,7 @@ namespace Dma
     class AxiDmaChannel
     {
     public:
-        friend class AxiDmaBdRing;
+        friend class XAxiDmaBdRing;
 
         static constexpr uint32_t XAXIDMA_TX_OFFSET = 0x00000000;
         static constexpr uint32_t XAXIDMA_RX_OFFSET = 0x00000030;
@@ -67,7 +67,7 @@ namespace Dma
         };
 
         AxiDmaChannel(std::shared_ptr<UIO> uio, Direction direction);
-        ~AxiDmaChannel();
+        ~AxiDmaChannel() = default;
 
         AxiDmaChannel(const AxiDmaChannel &) = delete;
         AxiDmaChannel &operator=(const AxiDmaChannel &) = delete;
@@ -81,7 +81,8 @@ namespace Dma
         void XAxiDmaIntrDisable(bool ioc, bool delay, bool error);
         void XAxiDmaAckInterrupts(std::uint32_t mask);
         void XAxiDmaClearAllInterrupts();
-        void XAxiDmaCDisableAllInterrupts();
+        std::uint32_t XAxiDmaGetAllInterrupts();
+        void XAxiDmaDisableAllInterrupts();
         bool XAxiDmaIsStarted() const;
         bool XAxiDmaIsIdle() const;
         std::uint32_t XAxiDmaStatusRead();
@@ -90,26 +91,24 @@ namespace Dma
         std::uint32_t XAxiDmaGetCurrentDescriptorLow() const;
         std::uint32_t XAxiDmaGetCurrentDescriptorHigh() const;
         void XAxiDmaSetTailDescriptor(std::uint64_t desc_addr);
+        std::uint32_t XAxiDmaGetTailDescriptorLow() const;
+        std::uint32_t XAxiDmaGetTailDescriptorHigh() const;
         void XAxiDmaSetSourceAddress(std::uint64_t buffer_address);
         void XAxiDmaSetDestinationAddress(std::uint64_t buffer_address);
         void XAxiDmaSelectCyclicMode(bool enable);
         void XAxiDmaSelectKeyHoleMode(bool enable);
         bool XAxiDmaIsChannelAvailable() const;
         bool XAxiDmaIsScatterGatherIncluded() const;
+        void XAxiDmaLength(std::uint32_t length);
 
         void XAxiDmaPrintStatus();
         void XAxiDmaPrintControl();
-
-        void AttachInterruptHandler(const std::function<void()> &callback, bool queue_enabled = false);
-        void DetachInterruptHandler();
 
     private:
         std::shared_ptr<UIO> m_Uio;
         const Direction m_Direction;
         const std::uint32_t m_BaseAddress;
-        std::function<void()> m_Callback;
 
-        void OnInterrupt();
         std::uint32_t ReadReg(std::uint32_t offset) const;
         std::uint64_t ReadReg64(std::uint32_t offset) const;
         void WriteReg(std::uint32_t offset, std::uint32_t value);
