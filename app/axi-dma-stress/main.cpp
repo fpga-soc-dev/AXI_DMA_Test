@@ -105,7 +105,6 @@ void TestAxiDmaSimpleSingleChannel()
     SPDLOG_INFO("Data integrity verified for all captured frames.");
 }
 
-#ifdef UNUSED
 void TestAxiDmaCyclicSingleChannel()
 {
     Dma::AxiDma::Config dma_config{
@@ -179,7 +178,7 @@ void TestAxiDmaCyclicSingleChannel()
     axiDma.Stop();
     dataGen.Stop();
 }
-#endif
+
 int main()
 {
     spdlog::set_level(spdlog::level::debug);
@@ -187,8 +186,8 @@ int main()
 
     try
     {
-        TestAxiDmaSimpleSingleChannel();
-        //  TestAxiDmaCyclicSingleChannel();
+        // TestAxiDmaSimpleSingleChannel();
+        TestAxiDmaCyclicSingleChannel();
     }
     catch (const std::exception &e)
     {

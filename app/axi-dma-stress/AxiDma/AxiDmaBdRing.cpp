@@ -734,6 +734,7 @@ namespace Dma
 
         while (bd_count < bd_limit)
         {
+            m_CacheManager->InvalidateCache(m_BdBufferName, reinterpret_cast<std::uintptr_t>(cur_bd_ptr.GetBaseAddress()) - m_FirstBdAddr, m_Separation, UDmaBuffer::SyncDirection::DMA_FROM_DEVICE);
             /* Read the status */
             // XAXIDMA_CACHE_INVALIDATE(CurBdPtr);
             bd_sts = cur_bd_ptr.XAxiDmaBdGetSts();
