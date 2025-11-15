@@ -475,7 +475,7 @@ namespace Dma
                 return false;
             }
 
-            status = bd_curr_ptr.XAxiDmaBdSetLength(frame_size, m_RxBdRing->m_MaxTransferLen);
+            status = bd_curr_ptr.XAxiDmaBdSetLength(frame_size);
             if (!status)
             {
                 SPDLOG_ERROR("Rx set length failed for length={} bd_ptr={:08x} status={}",

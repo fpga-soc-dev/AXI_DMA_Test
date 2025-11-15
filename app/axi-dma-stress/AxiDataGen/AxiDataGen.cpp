@@ -29,15 +29,16 @@ void AxiDataGen::SetConfig(uint32_t frame_samples, uint32_t frame_period)
     m_UioDevice->Write(SAMPLE_PERIOD, calculated_period);
     if (m_UioDevice->Read(SAMPLE_PERIOD) != calculated_period)
     {
-        SPDLOG_WARN("SAMPLE_PERIOD register mismatch after write");
+        SPDLOG_WARN("SAMPLE_PERIOD register mismatch after write {}", calculated_period);
     }
 
     m_FramePeriod = calculated_period;
 
     m_UioDevice->Write(FRAME_SAMPLES, frame_samples);
-    if (m_UioDevice->Read(FRAME_SAMPLES) != frame_samples)
+    auto frames_samples_readback = m_UioDevice->Read(FRAME_SAMPLES);
+    if (frames_samples_readback != frame_samples)
     {
-        SPDLOG_WARN("FRAME_SAMPLES register mismatch after write {}", frame_samples);
+        SPDLOG_WARN("FRAME_SAMPLES register mismatch after write {} (read back {})", frame_samples, frames_samples_readback);
     }
     m_FrameSamples = frame_samples;
 }

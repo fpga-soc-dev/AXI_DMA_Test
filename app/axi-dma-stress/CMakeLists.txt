@@ -22,7 +22,6 @@ set(SOURCES
     AxiDma/AxiDmaBd.cpp
     AxiDma/AxiDmaBdRing.cpp
     AxiDma/AxiDmaChannel.cpp
-    AxiTrafficGen/AxiTrafficGen.cpp
     UIO/Uio.cpp
     main.cpp
 )
@@ -37,7 +36,6 @@ target_include_directories(${PROJECT_NAME}
         Utilities/
         DmaBuffer/
         AxiDataGen/
-        AxiTrafficGen/
         AxiDma/
         UIO/
 )

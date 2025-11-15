@@ -1,7 +1,7 @@
 / {
 	
 	chosen {
-		bootargs = "earlycon console=ttyPS0,115200 clk_ignore_unused root=/dev/mmcblk0p2 rw rootwait uio_pdrv_genirq.of_id=generic-uio cpuidle.off=1";
+		bootargs = "earlycon console=ttyPS0,115200 clk_ignore_unused root=/dev/mmcblk0p2 rw cma=128M rootwait uio_pdrv_genirq.of_id=generic-uio cpuidle.off=1";
 	};
 
 	
@@ -12,6 +12,13 @@
                 view-port = <0x170>;
                 drv-vbus;
         };
+       /* 
+        dma_proxy {
+    		compatible ="xlnx,dma_proxy";
+    		dmas = <&axi_dma_2 1>;
+    		dma-names = "dma_proxy_rx";
+	};
+	*/
 };
 
 
@@ -47,6 +54,13 @@
     linux,uio-name = "data-generator-dma-sg";
 };
 
+/*
+&DataGenerator_2 {
+    compatible = "generic-uio";
+    linux,uio-name = "data-generator-dma-proxy";
+};
+*/
+
 &axi_dma_0 {
     compatible = "generic-uio";
     linux,uio-name = "axi-dma-simple";
@@ -56,10 +70,6 @@
     compatible = "generic-uio";
     linux,uio-name = "axi-dma-sg";
 };
-
-
-
-
 
 
 

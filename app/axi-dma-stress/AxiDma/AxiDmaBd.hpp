@@ -42,9 +42,10 @@ namespace Dma
         static constexpr uint32_t XAXIDMA_LAST_APPWORD = 4;   /* The offset of the last app word. */
         static constexpr uint32_t XAXIDMA_BD_NUM_WORDS = 16U; /* Total number of words for one BD */
 
-        static constexpr uint32_t XAXIDMA_BD_CTRL_TXSOF_MASK = 0x08000000; /**< First tx packet */
-        static constexpr uint32_t XAXIDMA_BD_CTRL_TXEOF_MASK = 0x04000000; /**< Last tx packet */
-        static constexpr uint32_t XAXIDMA_BD_CTRL_ALL_MASK = 0x0C000000;   /**< All control bits */
+        static constexpr uint32_t XAXIDMA_BD_CTRL_TXSOF_MASK = 0x08000000;  /**< First tx packet */
+        static constexpr uint32_t XAXIDMA_BD_CTRL_TXEOF_MASK = 0x04000000;  /**< Last tx packet */
+        static constexpr uint32_t XAXIDMA_BD_CTRL_ALL_MASK = 0x0C000000;    /**< All control bits */
+        static constexpr uint32_t XAXIDMA_BD_CTRL_LENGTH_MASK = 0x03FFFFFF; /**< Length mask */
 
         /*Bitmasks of XAXIDMA_BD_STS_OFFSET register */
         static constexpr uint32_t XAXIDMA_BD_STS_COMPLETE_MASK = 0x80000000; /* Completed */
@@ -55,6 +56,7 @@ namespace Dma
         static constexpr uint32_t XAXIDMA_BD_STS_RXSOF_MASK = 0x08000000;    /* First rx pkt */
         static constexpr uint32_t XAXIDMA_BD_STS_RXEOF_MASK = 0x04000000;    /* Last rx pkt */
         static constexpr uint32_t XAXIDMA_BD_STS_ALL_MASK = 0xFC000000;      /* All status bits */
+        static constexpr uint32_t XAXIDMA_BD_STS_LENGTH_MASK = 0x03FFFFFF;   /**< Length mask */
 
         static constexpr uint32_t XAXIDMA_BD_ID_OFFSET = 0x34;         /* Sw ID */
         static constexpr uint32_t XAXIDMA_BD_HAS_DRE_SHIFT = 8;        /* Whether has DRE shift */
@@ -67,9 +69,15 @@ namespace Dma
     public:
         AxiDmaBd();
 
+        AxiDmaBd(const AxiDmaBd &other);
+        AxiDmaBd(AxiDmaBd &&other) noexcept;
+
+        AxiDmaBd &operator=(const AxiDmaBd &other);
+        AxiDmaBd &operator=(AxiDmaBd &&other) noexcept;
+
         void SetBaseAddress(std::uint8_t *base_addr);
         std::uint8_t *GetBaseAddress() const;
-        bool XAxiDmaBdSetLength(std::uint32_t len_bytes, std::uint32_t len_mask);
+        bool XAxiDmaBdSetLength(std::uint32_t len_bytes);
         bool XAxiDmaBdSetBufAddr(std::uint64_t phys_addr);
         std::uint32_t XAxiDmaBdGetBufAddr();
         bool XAxiDmaBdSetBufAddrMicroMode(std::uint64_t phys_addr);
@@ -83,9 +91,12 @@ namespace Dma
         void XAxiDmaBdClear();
         std::uint32_t XAxiDmaBdGetCtrl();
         std::uint32_t XAxiDmaBdGetSts();
+        std::uint32_t XAxiDmaBdGetTransferredBytes();
         void XAxiDmaBdSetSts(std::uint32_t sts);
-        std::uint32_t XAxiDmaBdGetLength(std::uint32_t length_mask);
+        std::uint32_t XAxiDmaBdGetLength();
         void XAxiDmaBdSetId(std::uint32_t id);
+        void XAxiDmaBdSetStsCtrlStrm(bool has_sts_cntrl_strm);
+        void XAxiDmaBdSetHasDre(bool has_dre);
         bool XAxiDmaBdHwCompleted();
 
     private:

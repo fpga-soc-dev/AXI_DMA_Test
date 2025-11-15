@@ -197,8 +197,8 @@ namespace Dma
         {
             current_bd.SetBaseAddress(reinterpret_cast<std::uint8_t *>(bd_virt_addr));
             current_bd.XAxiDmaBdSetNextDescOffset(static_cast<std::uint64_t>(bd_phys_addr));
-            // AxiDmaBd::XAxiDmaBdWrite(bd_virt_addr, XAXIDMA_BD_HAS_STSCNTRL_OFFSET, static_cast<std::uint32_t>(m_HasStsCntrlStrm));
-            // AxiDmaBd::XAxiDmaBdWrite(bd_virt_addr, XAXIDMA_BD_HAS_DRE_OFFSET, ((static_cast<std::uint32_t>(m_HasDRE) << XAXIDMA_BD_HAS_DRE_SHIFT) | m_DataWidth));
+            current_bd.XAxiDmaBdSetStsCtrlStrm(m_HasStsCntrlStrm);
+            current_bd.XAxiDmaBdSetHasDre(m_HasDRE);
 
             std::size_t offset = bd_virt_addr - virt_addr;
             m_CacheManager->FlushCache(m_BdBufferName, offset, m_Separation, UDmaBuffer::SyncDirection::DMA_TO_DEVICE);
@@ -210,8 +210,8 @@ namespace Dma
         /* At the end of the ring, link the last BD back to the top */
         current_bd.XAxiDmaBdSetNextDescOffset(static_cast<std::uint64_t>(phys_addr));
         /* Setup the last BD's hardware information */
-        // AxiDmaBd::XAxiDmaBdWrite(bd_virt_addr, XAXIDMA_BD_HAS_STSCNTRL_OFFSET, static_cast<std::uint32_t>(m_HasStsCntrlStrm));
-        // AxiDmaBd::XAxiDmaBdWrite(bd_virt_addr, XAXIDMA_BD_HAS_DRE_OFFSET, ((static_cast<std::uint32_t>(m_HasDRE) << XAXIDMA_BD_HAS_DRE_SHIFT) | m_DataWidth));
+        current_bd.XAxiDmaBdSetStsCtrlStrm(m_HasStsCntrlStrm);
+        current_bd.XAxiDmaBdSetHasDre(m_HasDRE);
 
         /* Setup and initialize pointers and counters */
         m_RunState = AXIDMA_CHANNEL_HALTED;
@@ -340,12 +340,10 @@ namespace Dma
 
         if (current_addr >= m_LastBdAddr)
         {
-            // Wrap around to first BD
             return reinterpret_cast<std::uint8_t *>(m_FirstBdAddr);
         }
         else
         {
-            // Move to next BD
             return reinterpret_cast<std::uint8_t *>(current_addr + m_Separation);
         }
     }
@@ -416,7 +414,7 @@ namespace Dma
         for (int i = 0; i < num_bd; i++)
         {
             /* Make sure the length value in the BD is non-zero. */
-            if (cur_bd_ptr.XAxiDmaBdGetLength(m_MaxTransferLen) == 0)
+            if (cur_bd_ptr.XAxiDmaBdGetLength() == 0)
             {
                 SPDLOG_ERROR("BdRingToHw: BD {} has zero length", i);
                 return false;
@@ -427,6 +425,7 @@ namespace Dma
 
             /* Flush the current BD so DMA core could see the updates */
             m_CacheManager->FlushCache(m_BdBufferName, reinterpret_cast<std::uintptr_t>(cur_bd_ptr.GetBaseAddress()) - m_FirstBdAddr, m_Separation, UDmaBuffer::SyncDirection::DMA_TO_DEVICE);
+
             cur_bd_ptr.SetBaseAddress(XAxiDmaBdRingNext(cur_bd_ptr.GetBaseAddress()));
             bd_cr = cur_bd_ptr.XAxiDmaBdGetCtrl();
             bd_sts = cur_bd_ptr.XAxiDmaBdGetSts();
@@ -440,7 +439,7 @@ namespace Dma
         }
 
         /* Make sure the length value in the last BD is non-zero. */
-        if (cur_bd_ptr.XAxiDmaBdGetLength(m_MaxTransferLen) == 0)
+        if (cur_bd_ptr.XAxiDmaBdGetLength() == 0)
         {
 
             SPDLOG_ERROR("BdRingToHw: last BD in the set has zero length");

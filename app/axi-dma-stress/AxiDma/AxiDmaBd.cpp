@@ -9,6 +9,36 @@ namespace Dma
     {
     }
 
+    AxiDmaBd::AxiDmaBd(const AxiDmaBd &other)
+        : m_Base(other.m_Base)
+    {
+    }
+
+    AxiDmaBd::AxiDmaBd(AxiDmaBd &&other) noexcept
+        : m_Base(other.m_Base)
+    {
+        other.m_Base = nullptr;
+    }
+
+    AxiDmaBd &AxiDmaBd::operator=(const AxiDmaBd &other)
+    {
+        if (this != &other)
+        {
+            m_Base = other.m_Base;
+        }
+        return *this;
+    }
+
+    AxiDmaBd &AxiDmaBd::operator=(AxiDmaBd &&other) noexcept
+    {
+        if (this != &other)
+        {
+            m_Base = other.m_Base;
+            other.m_Base = nullptr;
+        }
+        return *this;
+    }
+
     void AxiDmaBd::SetBaseAddress(std::uint8_t *base_addr)
     {
         m_Base = base_addr;
@@ -19,7 +49,7 @@ namespace Dma
         return m_Base;
     }
 
-    bool AxiDmaBd::XAxiDmaBdSetLength(std::uint32_t len_bytes, std::uint32_t len_mask)
+    bool AxiDmaBd::XAxiDmaBdSetLength(std::uint32_t len_bytes)
     {
         if (m_Base == nullptr)
         {
@@ -27,14 +57,14 @@ namespace Dma
             return false;
         }
 
-        if (len_bytes == 0 || len_bytes > len_mask)
+        if (len_bytes == 0 || len_bytes > XAXIDMA_BD_CTRL_LENGTH_MASK)
         {
-            SPDLOG_ERROR("Error set length 0x{:X}, exceeds mask 0x{:X}", len_bytes, len_mask);
+            SPDLOG_ERROR("Error set length 0x{:X}, exceeds mask 0x{:X}", len_bytes, XAXIDMA_BD_CTRL_LENGTH_MASK);
             return false;
         }
 
         auto reg_value = XAxiDmaBdRead(XAXIDMA_BD_CTRL_LEN_OFFSET);
-        reg_value = (reg_value & ~len_mask) | len_bytes;
+        reg_value = (reg_value & ~XAXIDMA_BD_CTRL_LENGTH_MASK) | len_bytes;
         XAxiDmaBdWrite(XAXIDMA_BD_CTRL_LEN_OFFSET, reg_value);
 
         return true;
@@ -63,11 +93,9 @@ namespace Dma
                 }
             }
         }
-#if defined(__aarch64__) || defined(__arch64__)
-        XAxiDmaBdWrite64(XAXIDMA_BD_BUFA_OFFSET, phys_addr);
-#else
-        XAxiDmaBdWrite(XAXIDMA_BD_BUFA_OFFSET, phys_addr);
-#endif
+
+        XAxiDmaBdWrite(XAXIDMA_BD_BUFA_OFFSET, phys_addr & 0xFFFFFFFF);
+        XAxiDmaBdWrite(XAXIDMA_BD_BUFA_MSB_OFFSET, ((phys_addr >> 32) & 0xFFFFFFFF));
 
         return true;
     }
@@ -131,6 +159,46 @@ namespace Dma
         XAxiDmaBdWrite(offset, value);
 
         return true;
+    }
+
+    void AxiDmaBd::XAxiDmaBdSetStsCtrlStrm(bool has_sts_cntrl_strm)
+    {
+        if (m_Base == nullptr)
+        {
+            SPDLOG_ERROR("Error set stscntrl strm, bd base is null");
+            return;
+        }
+
+        auto reg_value = XAxiDmaBdRead(XAXIDMA_BD_HAS_STSCNTRL_OFFSET);
+        if (has_sts_cntrl_strm)
+        {
+            reg_value |= 1;
+        }
+        else
+        {
+            reg_value &= ~1;
+        }
+        XAxiDmaBdWrite(XAXIDMA_BD_HAS_STSCNTRL_OFFSET, reg_value);
+    }
+
+    void AxiDmaBd::XAxiDmaBdSetHasDre(bool has_dre)
+    {
+        if (m_Base == nullptr)
+        {
+            SPDLOG_ERROR("Error set has dre, bd base is null");
+            return;
+        }
+
+        auto reg_value = XAxiDmaBdRead(XAXIDMA_BD_HAS_DRE_OFFSET);
+        if (has_dre)
+        {
+            reg_value |= (1 << XAXIDMA_BD_HAS_DRE_SHIFT);
+        }
+        else
+        {
+            reg_value &= ~(1 << XAXIDMA_BD_HAS_DRE_SHIFT);
+        }
+        XAxiDmaBdWrite(XAXIDMA_BD_HAS_DRE_OFFSET, reg_value);
     }
 
     std::uint32_t AxiDmaBd::XAxiDmaBdGetAppWord(std::uint32_t index, int &valid)
@@ -233,6 +301,16 @@ namespace Dma
         return XAxiDmaBdRead(XAXIDMA_BD_STS_OFFSET) & XAXIDMA_BD_STS_ALL_MASK;
     }
 
+    std::uint32_t AxiDmaBd::XAxiDmaBdGetTransferredBytes()
+    {
+        if (m_Base == nullptr)
+        {
+            SPDLOG_ERROR("Error get transferred bytes, bd base is null");
+            return 0;
+        }
+        return XAxiDmaBdRead(XAXIDMA_BD_STS_OFFSET) & XAXIDMA_BD_STS_LENGTH_MASK;
+    }
+
     void AxiDmaBd::XAxiDmaBdSetSts(std::uint32_t sts)
     {
         if (m_Base == nullptr)
@@ -243,14 +321,14 @@ namespace Dma
         XAxiDmaBdWrite(XAXIDMA_BD_STS_OFFSET, sts);
     }
 
-    std::uint32_t AxiDmaBd::XAxiDmaBdGetLength(std::uint32_t length_mask)
+    std::uint32_t AxiDmaBd::XAxiDmaBdGetLength()
     {
         if (m_Base == nullptr)
         {
             SPDLOG_ERROR("Error get length, bd base is null");
             return 0;
         }
-        return XAxiDmaBdRead(XAXIDMA_BD_CTRL_LEN_OFFSET) & length_mask;
+        return XAxiDmaBdRead(XAXIDMA_BD_CTRL_LEN_OFFSET) & XAXIDMA_BD_CTRL_LENGTH_MASK;
     }
 
     void AxiDmaBd::XAxiDmaBdSetId(std::uint32_t id)

@@ -1,6 +1,7 @@
 #include <thread>
 #include <chrono>
 #include <atomic>
+#include <csignal>
 #include <algorithm>
 #include <spdlog/spdlog.h>
 #include "UDmaBuffer.hpp"
@@ -125,7 +126,7 @@ void TestAxiDmaCyclicSingleChannel()
         .BufferLengthRegister = 26};
 
     static constexpr uint32_t TEST_SAMPLE_COUNT = 1024u;
-    static constexpr uint32_t TEST_FRAME_INTERVAL_US = 500u;
+    static constexpr uint32_t TEST_FRAME_INTERVAL_US = 1000u;
 
     std::vector<std::vector<int>> results;
 
@@ -137,8 +138,8 @@ void TestAxiDmaCyclicSingleChannel()
 
     Dma::UDmaBufferAllocate::UdmaBufConfig buffer_config{
         .buffer_vec = {
-            {0, frame_size * 16 * 4}, // for streamdata bd count * one frame size udmabuf0
-            {1, 64 * 16 * 4}          // sizeof bd * bd_count for BD descriptors udmabuf1
+            {0, frame_size * 16}, // for streamdata bd count * one frame size udmabuf0
+            {1, 64 * 16}          // sizeof bd * bd_count for BD descriptors udmabuf1
         }};
 
     if (!dmaBuffer.CreateBuffer(buffer_config))
@@ -172,16 +173,18 @@ void TestAxiDmaCyclicSingleChannel()
         }
         results.push_back(std::move(current_frame));
 
-        
-        //if(buffer_start[0] == 0 && buffer_start[1] == 0 && buffer_start[2] == 0)
-        //{
-            //auto current_desc = axiDma.GetCurrentDescriptor();
-            //SPDLOG_DEBUG("===================================");
-            //SPDLOG_DEBUG("Current DESC: 0x{:08X}", current_desc);
-            //SPDLOG_DEBUG("Buffer Addr : 0x{:08X}", reinterpret_cast<std::uintptr_t>(buffer_start));
-            //SPDLOG_DEBUG("buf: {}, {}, {}", buffer_start[0], buffer_start[1], buffer_start[2]);
-        //}
-        
+    
+        if(buffer_start[0] == 0 && buffer_start[1] == 0 && buffer_start[2] == 0)
+        {
+            auto current_desc = axiDma.GetCurrentDescriptor();
+            auto tail_desc = axiDma.GetTailDescriptor();
+            SPDLOG_DEBUG("===================================");
+            SPDLOG_DEBUG("Current DESC: 0x{:08X}", current_desc);
+            SPDLOG_DEBUG("Tail    DESC: 0x{:08X}", tail_desc);
+            SPDLOG_DEBUG("Buffer Addr : 0x{:08X}", reinterpret_cast<std::uintptr_t>(buffer_start));
+            SPDLOG_DEBUG("buf: {}, {}, {}", buffer_start[0], buffer_start[1], buffer_start[2]);
+        }
+            
         interrupt_count++; }, false);
 
     SPDLOG_INFO("Starting 10-second test with single frame transfers...");

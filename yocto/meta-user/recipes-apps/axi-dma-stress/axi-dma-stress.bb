@@ -18,8 +18,6 @@ SRC_URI = "\
     file://DmaBuffer/UDmaBufferIoctl.hpp \
     file://AxiDataGen/AxiDataGen.cpp \
     file://AxiDataGen/AxiDataGen.hpp \   
-    file://AxiTrafficGen/AxiTrafficGen.cpp \
-    file://AxiTrafficGen/AxiTrafficGen.hpp \
     file://UIO/Uio.cpp \
     file://UIO/Uio.hpp \
     file://AxiDma/AxiDma.cpp \
