@@ -24,7 +24,7 @@ namespace Dma
         friend class AxiDma;
 
         explicit XAxiDmaBdRing(std::shared_ptr<AxiDmaChannel> channel, ICacheManager *cache_manager, const std::string &bd_buffer_name);
-        ~XAxiDmaBdRing();
+        ~XAxiDmaBdRing() = default;
 
         void SetCacheManager(ICacheManager *cache_manager);
         void XAxiDmaBdRingSnapShotCurrBd();
@@ -41,7 +41,8 @@ namespace Dma
         bool XAxiDmaBdRingHwIsStarted();
         bool XAxiDmaStartBdRingHw();
         void XAxiDmaBdRingDumpRegs();
-        bool XAxiDmaBdRingFromHw(int bd_limit, std::uint8_t **bd_set_ptr);
+        void XAxiDmaBdRingDumpAllBds();
+        int XAxiDmaBdRingFromHw(int bd_limit, std::uint8_t **bd_set_ptr);
 
     private:
         std::shared_ptr<AxiDmaChannel> m_Channel;

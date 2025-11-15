@@ -53,7 +53,6 @@ namespace Dma
 
         if (word_len != 0)
         {
-
             if (phys_addr & (word_len - 1))
             {
                 if ((has_dre & XAXIDMA_BD_HAS_DRE_MASK) == 0)
@@ -175,21 +174,21 @@ namespace Dma
 
     void AxiDmaBd::XAxiDmaBdDump()
     {
-        SPDLOG_INFO("=== AXI DMA BD @ %p ===\n", static_cast<void *>(m_Base));
-        SPDLOG_INFO("\tNext Bd Ptr: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_NDESC_OFFSET));
-        SPDLOG_INFO("\tBuff addr: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_BUFA_OFFSET));
-        SPDLOG_INFO("\tMCDMA Fields: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_MCCTL_OFFSET));
-        SPDLOG_INFO("\tVSIZE_STRIDE: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_STRIDE_VSIZE_OFFSET));
-        SPDLOG_INFO("\tContrl len: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_CTRL_LEN_OFFSET));
-        SPDLOG_INFO("\tStatus: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_STS_OFFSET));
-        SPDLOG_INFO("\tAPP 0: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_USR0_OFFSET));
-        SPDLOG_INFO("\tAPP 1: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_USR1_OFFSET));
-        SPDLOG_INFO("\tAPP 2: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_USR2_OFFSET));
-        SPDLOG_INFO("\tAPP 3: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_USR3_OFFSET));
-        SPDLOG_INFO("\tAPP 4: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_USR4_OFFSET));
-        SPDLOG_INFO("\tSW ID: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_ID_OFFSET));
-        SPDLOG_INFO("\tStsCtrl: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_HAS_STSCNTRL_OFFSET));
-        SPDLOG_INFO("\tDRE: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_HAS_DRE_OFFSET));
+        SPDLOG_TRACE("=== AXI DMA BD @ %p ===\n", static_cast<void *>(m_Base));
+        SPDLOG_TRACE("\tNext Bd Ptr: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_NDESC_OFFSET));
+        SPDLOG_TRACE("\tBuff addr: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_BUFA_OFFSET));
+        SPDLOG_TRACE("\tMCDMA Fields: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_MCCTL_OFFSET));
+        SPDLOG_TRACE("\tVSIZE_STRIDE: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_STRIDE_VSIZE_OFFSET));
+        SPDLOG_TRACE("\tContrl len: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_CTRL_LEN_OFFSET));
+        SPDLOG_TRACE("\tStatus: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_STS_OFFSET));
+        SPDLOG_TRACE("\tAPP 0: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_USR0_OFFSET));
+        SPDLOG_TRACE("\tAPP 1: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_USR1_OFFSET));
+        SPDLOG_TRACE("\tAPP 2: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_USR2_OFFSET));
+        SPDLOG_TRACE("\tAPP 3: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_USR3_OFFSET));
+        SPDLOG_TRACE("\tAPP 4: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_USR4_OFFSET));
+        SPDLOG_TRACE("\tSW ID: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_ID_OFFSET));
+        SPDLOG_TRACE("\tStsCtrl: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_HAS_STSCNTRL_OFFSET));
+        SPDLOG_TRACE("\tDRE: 0x{:08X}", XAxiDmaBdRead(XAXIDMA_BD_HAS_DRE_OFFSET));
     }
 
     void AxiDmaBd::XAxiDmaBdClear()

@@ -43,22 +43,23 @@ namespace Dma
         void Stop();
 
         bool XAxiDmaRxSimpleTransfer(std::uint32_t length);
-        bool InitializeSimpleModeConfig(ICacheManager *cache_manager, const BufferConfig &rx_config, const BufferConfig &tx_config);
+        bool InitializeSimpleModeConfig(ICacheManager *cache_manager, std::string rx_buffer_name, std::string tx_buffer_name);
+        void AttachInterruptRxHandler(const std::function<void()> &callback, bool queue_enabled = false);
+        std::uint64_t GetCurrentDescriptor() const;
+        std::uint64_t GetTailDescriptor() const;
+        std::uint32_t *GetCurrentBufferAddress() const;
 
         bool XAxiDmaRxCyclicTransfer();
         bool InitializeCyclicModeConfig(ICacheManager *cache_manager,
-                                        const BufferConfig &rx_data_config,
-                                        const BufferConfig &rx_ring_config,
-                                        const BufferConfig &tx_data_config,
-                                        const BufferConfig &tx_ring_config);
+                                        std::string rx_data_buffer_name,
+                                        std::string rx_ring_buffer_name,
+                                        std::string tx_data_buffer_name,
+                                        std::string tx_ring_buffer_name);
 
-        void AttachInterruptRxHandler(const std::function<void()> &callback, bool queue_enabled = false);
         void DetachRxInterruptHandler();
 
         // void AttachInterruptTxHandler(const std::function<void()> &callback, bool queue_enabled = false);
         // void DetachTxInterruptHandler();
-
-        // std::uint32_t XAxiDmaGetBdCount();
 
     private:
         std::shared_ptr<UIO> m_UioDevice;
@@ -79,16 +80,17 @@ namespace Dma
 
         Config m_Config;
         bool m_IsInitialized{false};
-
-        void PrepareTxDataBuffer(); // FlushCache
-        void PrepareRxDataBuffer(); // InvalidateCache
+        std::uintptr_t m_CurrentRxBufferAddr{0};
+        std::uint32_t m_RxFrameSize{0};
+        std::uint64_t m_RxDataBaseAddr{0};
+        std::uint64_t m_RxRingBaseAddr{0};
 
         void OnRxInterrupt();
 
-        void ConfigureRxDataBuffer(const BufferConfig &config);
-        void ConfigureTxDataBuffer(const BufferConfig &config);
-        void ConfigureRxRingBuffer(const BufferConfig &config);
-        void ConfigureTxRingBuffer(const BufferConfig &config);
+        void ConfigureRxDataBuffer(std::string config);
+        void ConfigureRxRingBuffer(std::string config);
+        void ConfigureTxDataBuffer(std::string config);
+        void ConfigureTxRingBuffer(std::string config);
 
         bool RxBdRingSetup();
         bool TxBdRingSetup();

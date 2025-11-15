@@ -17,7 +17,7 @@ namespace Dma
         Stop();
     }
 
-    bool AxiDma::InitializeSimpleModeConfig(ICacheManager *cache_manager, const BufferConfig &rx_config, const BufferConfig &tx_config)
+    bool AxiDma::InitializeSimpleModeConfig(ICacheManager *cache_manager, std::string rx_buffer_name, std::string tx_buffer_name)
     {
         uint32_t max_transfer_len{0};
         m_IsInitialized = false;
@@ -43,7 +43,7 @@ namespace Dma
             }
             m_TxChannel->XAxiDmaIntrDisable(true, true, true);
             m_TxChannel->XAxiDmaIntrEnable(true, true, true);
-            // ConfigureTxDataBuffer(tx_config);
+            // ConfigureTxDataBuffer(tx_buffer_name);
         }
 
         if (m_Config.HasS2mm)
@@ -55,7 +55,7 @@ namespace Dma
             }
             m_RxChannel->XAxiDmaIntrDisable(true, true, true);
             m_RxChannel->XAxiDmaIntrEnable(true, true, true);
-            ConfigureRxDataBuffer(rx_config);
+            ConfigureRxDataBuffer(rx_buffer_name);
         }
 
         m_IsInitialized = true;
@@ -63,10 +63,10 @@ namespace Dma
     }
 
     bool AxiDma::InitializeCyclicModeConfig(ICacheManager *cache_manager,
-                                            const BufferConfig &rx_data_config,
-                                            const BufferConfig &rx_ring_config,
-                                            const BufferConfig &tx_data_config,
-                                            const BufferConfig &tx_ring_config)
+                                            std::string rx_data_buffer_name,
+                                            std::string rx_ring_buffer_name,
+                                            std::string tx_data_buffer_name,
+                                            std::string tx_ring_buffer_name)
     {
         uint32_t max_transfer_len{0};
         m_IsInitialized = false;
@@ -79,6 +79,15 @@ namespace Dma
             return false;
         }
 
+        if (m_CacheManager)
+        {
+            SPDLOG_WARN("Cache manager is already set");
+        }
+        else
+        {
+            m_CacheManager = cache_manager;
+        }
+
         if (m_Config.Mm2SNumChannels > 1 || m_Config.S2MmNumChannels > 1)
         {
             max_transfer_len = XAXIDMA_MCHAN_MAX_TRANSFER_LEN;
@@ -88,8 +97,8 @@ namespace Dma
             max_transfer_len = (1U << m_Config.BufferLengthRegister) - 1;
         }
 
-        m_TxBdRing = std::make_shared<XAxiDmaBdRing>(m_TxChannel, cache_manager, tx_ring_config.buffer_name);
-        m_RxBdRing = std::make_shared<XAxiDmaBdRing>(m_RxChannel, cache_manager, rx_ring_config.buffer_name);
+        m_TxBdRing = std::make_shared<XAxiDmaBdRing>(m_TxChannel, cache_manager, tx_ring_buffer_name);
+        m_RxBdRing = std::make_shared<XAxiDmaBdRing>(m_RxChannel, cache_manager, rx_ring_buffer_name);
 
         m_TxBdRing->m_RunState = XAxiDmaBdRing::AXIDMA_CHANNEL_HALTED;
         m_TxBdRing->m_IsRxChannel = false;
@@ -163,8 +172,8 @@ namespace Dma
             }
             m_TxChannel->XAxiDmaIntrDisable(true, true, true);
             m_TxChannel->XAxiDmaIntrEnable(true, true, true);
-            // ConfigureTxDataBuffer(tx_data_config);
-            // ConfigureTxRingBuffer(tx_ring_config);
+            // ConfigureTxDataBuffer(tx_data_buffer_name);
+            // ConfigureTxRingBuffer(tx_ring_buffer_name);
         }
 
         if (m_Config.HasS2mm)
@@ -176,64 +185,50 @@ namespace Dma
             }
             m_RxChannel->XAxiDmaIntrDisable(true, true, true);
             m_RxChannel->XAxiDmaIntrEnable(true, true, true);
-            ConfigureRxDataBuffer(rx_data_config);
-            ConfigureRxRingBuffer(rx_ring_config);
+            ConfigureRxDataBuffer(rx_data_buffer_name);
+            ConfigureRxRingBuffer(rx_ring_buffer_name);
         }
 
         m_IsInitialized = true;
         return true;
     }
 
-    void AxiDma::ConfigureRxDataBuffer(const BufferConfig &config)
+    void AxiDma::ConfigureRxDataBuffer(std::string buffer_name)
     {
         if (!m_CacheManager)
         {
             SPDLOG_ERROR("Cache manager is not set not set");
             return;
         }
-        auto buffer_size = m_CacheManager->GetBufferSize(config.buffer_name);
+        auto buffer_size = m_CacheManager->GetBufferSize(buffer_name);
         if (buffer_size == 0)
         {
-            SPDLOG_ERROR("RX buffer {} not found", config.buffer_name);
+            SPDLOG_ERROR("RX buffer {} not found", buffer_name);
             return;
         }
 
-        m_RxDataBufferConfig = config;
-        SPDLOG_INFO("Configured RX buffer: {} (size: {})", config.buffer_name, buffer_size);
+        m_RxDataBufferConfig.buffer_name = buffer_name;
+        m_RxDataBufferConfig.size = buffer_size;
+        SPDLOG_INFO("Configured RX buffer: {} (size: {})", buffer_name, buffer_size);
     }
 
-    void AxiDma::ConfigureRxRingBuffer(const BufferConfig &config)
+    void AxiDma::ConfigureRxRingBuffer(std::string buffer_name)
     {
         if (!m_CacheManager)
         {
             SPDLOG_ERROR("Cache manager not set");
             return;
         }
-        auto buffer_size = m_CacheManager->GetBufferSize(config.buffer_name);
+        auto buffer_size = m_CacheManager->GetBufferSize(buffer_name);
         if (buffer_size == 0)
         {
-            SPDLOG_ERROR("RX ring buffer {} not found", config.buffer_name);
+            SPDLOG_ERROR("RX ring buffer {} not found", buffer_name);
             return;
         }
 
-        m_RxRingBufferConfig = config;
-        SPDLOG_INFO("Configured RX ring buffer: {} (size: {})", config.buffer_name, buffer_size);
-    }
-
-    void AxiDma::PrepareTxDataBuffer()
-    {
-        if (m_CacheManager && !m_TxDataBufferConfig.buffer_name.empty())
-        {
-            m_CacheManager->FlushCache(m_TxDataBufferConfig.buffer_name);
-        }
-    }
-
-    void AxiDma::PrepareRxDataBuffer()
-    {
-        if (m_CacheManager && !m_RxDataBufferConfig.buffer_name.empty())
-        {
-            m_CacheManager->InvalidateCache(m_RxDataBufferConfig.buffer_name);
-        }
+        m_RxRingBufferConfig.buffer_name = buffer_name;
+        m_RxRingBufferConfig.size = buffer_size;
+        SPDLOG_INFO("Configured RX ring buffer: {} (size: {})", buffer_name, buffer_size);
     }
 
     void AxiDma::AttachInterruptRxHandler(const std::function<void()> &callback, bool queue_enabled)
@@ -245,10 +240,6 @@ namespace Dma
         }
 
         m_RxCallback = callback;
-        // m_Uio->InterruptAttach([this]()
-        //                              { OnMm2sInterrupt(); },
-        //                              queue_enabled);
-
         m_UioDevice->InterruptAttach([this]()
                                      { OnRxInterrupt(); },
                                      queue_enabled);
@@ -266,21 +257,14 @@ namespace Dma
         auto irq_status = m_RxChannel->XAxiDmaGetAllInterrupts();
         m_RxChannel->XAxiDmaAckInterrupts(irq_status);
 
-        if (!(irq_status & AxiDmaChannel::XAXIDMA_IRQ_ALL_MASK))
+        if ((irq_status & AxiDmaChannel::XAXIDMA_IRQ_ERROR_MASK) ||
+            !(irq_status & AxiDmaChannel::XAXIDMA_IRQ_ALL_MASK))
         {
-            return;
-        }
+            if (m_Config.HasScatterGather)
+            {
+                m_RxBdRing->XAxiDmaBdRingDumpAllBds();
+            }
 
-        if ((irq_status & AxiDmaChannel::XAXIDMA_IRQ_ERROR_MASK))
-        {
-            // if (m_Config.HasScatterGather)
-            //{
-            //   m_RxBdRing.XAxiDmaBdRingDumpRegs();
-            // }
-            //  else
-            //{
-            //  XAxiDmaPrintStatus(Direction::S2MM, XAxiDmaDumpStatus(Direction::S2MM, status_reg));
-            // }
             SPDLOG_ERROR("DMA S2MM Error Interrupt occurred.");
             m_RxChannel->XAxiDmaPrintStatus();
             m_RxChannel->XAxiDmaReset();
@@ -288,18 +272,39 @@ namespace Dma
             return;
         }
 
-        /*
-        if (m_Config.HasScatterGather)
+        if (m_Config.HasScatterGather && m_RxBdRing && m_CacheManager)
         {
-            if ((irq_status & (XAXIDMA_IRQ_DELAY_MASK | XAXIDMA_IRQ_IOC_MASK)))
-            {
-                if (m_Callback)
-                {
-                    m_Callback();
-                }
-            }
+
+            static int processed_frames = 0;
+            std::uintptr_t buffer_base = m_CacheManager->GetPhysicalAddress(m_RxDataBufferConfig.buffer_name);
+
+            std::byte *buffer_base_virt = m_CacheManager->BufferPtr(m_RxDataBufferConfig.buffer_name);
+            int bd_count = m_RxBdRing->m_AllCnt;
+
+            std::size_t data_offset = (processed_frames * m_RxFrameSize) % (m_RxFrameSize * bd_count);
+            std::size_t bd_offset = (processed_frames % bd_count) * m_RxBdRing->m_Separation;
+
+            m_CurrentRxBufferAddr = reinterpret_cast<std::uintptr_t>(buffer_base_virt + data_offset);
+
+            SPDLOG_TRACE("Invalidating caches: frame={}, BD_addr=0x{:X}, data_addr=0x{:X}, data_offset=0x{:X}",
+                         processed_frames, bd_offset, m_CurrentRxBufferAddr, data_offset);
+
+            m_CacheManager->InvalidateCache(m_RxRingBufferConfig.buffer_name,
+                                            bd_offset, m_RxBdRing->m_Separation,
+                                            UDmaBuffer::SyncDirection::DMA_FROM_DEVICE);
+
+            m_CacheManager->InvalidateCache(m_RxDataBufferConfig.buffer_name,
+                                            data_offset, m_RxFrameSize,
+                                            UDmaBuffer::SyncDirection::DMA_FROM_DEVICE);
+
+            processed_frames++;
         }
-*/
+
+        else if (!m_Config.HasScatterGather && m_CacheManager)
+        {
+            m_CacheManager->InvalidateCache(m_RxDataBufferConfig.buffer_name);
+        }
+
         if (m_RxCallback)
         {
             m_RxCallback();
@@ -334,7 +339,7 @@ namespace Dma
             return false;
         }
 
-        PrepareRxDataBuffer();
+        m_CacheManager->FlushCache(m_RxDataBufferConfig.buffer_name);
         auto phys_addr = m_CacheManager->GetPhysicalAddress(m_RxDataBufferConfig.buffer_name);
 
         /*
@@ -343,7 +348,7 @@ namespace Dma
             SPDLOG_ERROR("Transfer length {} exceeds maximum allowed length {} for S2MM.", length, m_RxBdRing.m_MaxTransferLen);
             return false;
         }
-*/
+    */
         if (!m_Config.HasS2mm)
         {
             SPDLOG_ERROR("Simple transfer is not supported for S2MM.");
@@ -459,8 +464,10 @@ namespace Dma
         bd_curr_ptr.SetBaseAddress(bd_ptr.GetBaseAddress());
 
         auto rx_buffer_address = m_CacheManager->GetPhysicalAddress(m_RxDataBufferConfig.buffer_name);
+        m_CurrentRxBufferAddr = rx_buffer_address;
 
         std::uint32_t frame_size = m_CacheManager->GetBufferSize(m_RxDataBufferConfig.buffer_name) / bd_count;
+        m_RxFrameSize = frame_size;
 
         for (int index = 0; index < free_bd_count; ++index)
         {
@@ -491,12 +498,12 @@ namespace Dma
 
             rx_buffer_address += frame_size;
             bd_curr_ptr.SetBaseAddress(m_RxBdRing->XAxiDmaBdRingNext(bd_curr_ptr.GetBaseAddress()));
-            SPDLOG_DEBUG("RX BD[{}] configured, buf_addr={:08x}, length={}", index,
+            SPDLOG_TRACE("RX Data Buffer[{}] configured, buf_addr={:08x}, length={}", index,
                          (unsigned int)(rx_buffer_address - frame_size),
                          frame_size);
         }
 
-        status = m_RxBdRing->XAxiDmaBdRingSetCoalesce(16, 1);
+        status = m_RxBdRing->XAxiDmaBdRingSetCoalesce(1, 0);
         if (!status)
         {
             SPDLOG_ERROR("Failed to set coalesce for Rx BD ring.");
@@ -531,23 +538,24 @@ namespace Dma
         RxBdRingSetup();
         return true;
     }
-    /*
-        std::uint32_t AxiDma::XAxiDmaGetBdCount()
-        {
-            if (m_Config.HasScatterGather)
-            {
-                XAxiDma_Bd *bd_btr;
-                if (direction == Direction::MM2S)
-                {
-                    return m_TxBdRing.XAxiDmaBdRingFromHw(XAXIDMA_ALL_BDS, &bd_btr);
-                }
-                else if (direction == Direction::S2MM)
-                {
-                    return m_RxBdRing.XAxiDmaBdRingFromHw(XAXIDMA_ALL_BDS, &bd_btr);
-                }
-            }
-            return 0;
-        }
-            */
+
+    std::uint64_t AxiDma::GetCurrentDescriptor() const
+    {
+        auto low = m_RxChannel->XAxiDmaGetCurrentDescriptorLow();
+        auto high = m_RxChannel->XAxiDmaGetCurrentDescriptorHigh();
+        return (static_cast<std::uint64_t>(high) << 32) | low;
+    }
+
+    std::uint64_t AxiDma::GetTailDescriptor() const
+    {
+        auto low = m_RxChannel->XAxiDmaGetTailDescriptorLow();
+        auto high = m_RxChannel->XAxiDmaGetTailDescriptorHigh();
+        return (static_cast<std::uint64_t>(high) << 32) | low;
+    }
+
+    std::uint32_t *AxiDma::GetCurrentBufferAddress() const
+    {
+        return reinterpret_cast<std::uint32_t *>(m_CurrentRxBufferAddr);
+    }
 
 } // namespace Dma
