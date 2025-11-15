@@ -555,7 +555,7 @@ begin
                             fsm_state <= FSM_WAIT_DIVIDER;
                         else
                             div_cnt   <= (others => '0');
-                            tdata_i   <= (others => '0');
+                            tdata_i   <= std_logic_vector(frame_id);
                             frame_id  <= reg_frame_id_rw;
                             fsm_state <= FSM_IDLE;
                         end if;
@@ -572,13 +572,6 @@ begin
 
                     when FSM_SEND_WORD =>
                         frame_valid_i <= '1';
-
-                        if sample_idx = to_unsigned(0, 32) then
-                            tdata_i <= std_logic_vector(frame_id);
-                        else
-                            tdata_i <= std_logic_vector(frame_id + sample_idx);
-                        end if;
-
                         if sample_idx = reg_frame_samples - 1 then
                             tlast_i <= '1';
                         end if;
@@ -586,6 +579,12 @@ begin
                         fsm_state <= FSM_WAIT_TREADY;
 
                     when FSM_WAIT_TREADY =>
+
+                        if sample_idx = to_unsigned(0, 32) then
+                            tdata_i <= std_logic_vector(frame_id);
+                        else
+                            tdata_i <= std_logic_vector(frame_id + sample_idx);
+                        end if;
 
                         if sample_idx = reg_frame_samples - 1 then
                             tlast_i <= '1';

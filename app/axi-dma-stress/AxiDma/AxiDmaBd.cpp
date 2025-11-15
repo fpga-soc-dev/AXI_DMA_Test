@@ -72,6 +72,17 @@ namespace Dma
         return true;
     }
 
+    std::uint32_t AxiDmaBd::XAxiDmaBdGetBufAddr()
+    {
+        if (m_Base == nullptr)
+        {
+            SPDLOG_ERROR("Error get buf addr, bd base is null");
+            return 0;
+        }
+
+        return (XAxiDmaBdRead(XAXIDMA_BD_BUFA_OFFSET));
+    }
+
     bool AxiDmaBd::XAxiDmaBdSetBufAddrMicroMode(std::uint64_t phys_addr)
     {
         if (m_Base == nullptr)

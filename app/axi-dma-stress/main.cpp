@@ -115,7 +115,7 @@ void TestAxiDmaCyclicSingleChannel()
         .HasS2mm = false,
         .HasS2mmDRE = false,
         .S2MmDataWidth = 32,
-        .HasScatterGather = false,
+        .HasScatterGather = true,
         .Mm2SNumChannels = 0,
         .S2MmNumChannels = 1,
         .Mm2SBurstSize = 0,
@@ -124,8 +124,8 @@ void TestAxiDmaCyclicSingleChannel()
         .AddressWidth = 32,
         .BufferLengthRegister = 26};
 
-    static constexpr uint32_t TEST_SAMPLE_COUNT = 128u;
-    static constexpr uint32_t TEST_FRAME_INTERVAL_US = 100000u;
+    static constexpr uint32_t TEST_SAMPLE_COUNT = 1024u;
+    static constexpr uint32_t TEST_FRAME_INTERVAL_US = 500u;
 
     std::vector<std::vector<int>> results;
 
@@ -137,8 +137,8 @@ void TestAxiDmaCyclicSingleChannel()
 
     Dma::UDmaBufferAllocate::UdmaBufConfig buffer_config{
         .buffer_vec = {
-            {0, frame_size * 16}, // for streamdata bd count * one frame size udmabuf0
-            {1, 64 * 16}          // for BD descriptors udmabuf1
+            {0, frame_size * 16 * 4}, // for streamdata bd count * one frame size udmabuf0
+            {1, 64 * 16 * 4}          // sizeof bd * bd_count for BD descriptors udmabuf1
         }};
 
     if (!dmaBuffer.CreateBuffer(buffer_config))
@@ -162,8 +162,7 @@ void TestAxiDmaCyclicSingleChannel()
             return;
         }
 
-        //auto current_desc = axiDma.GetCurrentDescriptor();
-        //auto tail_desc = axiDma.GetTailDescriptor();
+
         std::uint32_t* buffer_start = axiDma.GetCurrentBufferAddress();
 
         std::vector<int> current_frame;
@@ -172,13 +171,17 @@ void TestAxiDmaCyclicSingleChannel()
             current_frame.push_back(static_cast<int>(buffer_start[i]));
         }
         results.push_back(std::move(current_frame));
-        
-        //SPDLOG_DEBUG("===================================");
-        //SPDLOG_DEBUG("Current DESC: 0x{:08X}", current_desc);
-        //SPDLOG_DEBUG("Tail DESC   : 0x{:08X}", tail_desc);
-        //SPDLOG_DEBUG("Buffer Addr : 0x{:08X}", reinterpret_cast<std::uintptr_t>(buffer_start));
-        //SPDLOG_DEBUG("buf: {}, {}, {}, {},{}", buffer_start[0], buffer_start[1], buffer_start[2], buffer_start[4094],buffer_start[4095]);
 
+        
+        //if(buffer_start[0] == 0 && buffer_start[1] == 0 && buffer_start[2] == 0)
+        //{
+            //auto current_desc = axiDma.GetCurrentDescriptor();
+            //SPDLOG_DEBUG("===================================");
+            //SPDLOG_DEBUG("Current DESC: 0x{:08X}", current_desc);
+            //SPDLOG_DEBUG("Buffer Addr : 0x{:08X}", reinterpret_cast<std::uintptr_t>(buffer_start));
+            //SPDLOG_DEBUG("buf: {}, {}, {}", buffer_start[0], buffer_start[1], buffer_start[2]);
+        //}
+        
         interrupt_count++; }, false);
 
     SPDLOG_INFO("Starting 10-second test with single frame transfers...");
@@ -201,6 +204,8 @@ void TestAxiDmaCyclicSingleChannel()
     int correct_frames = 0;
     int incorrect_frames = 0;
     int total_word_errors = 0;
+    int prev_frame_number = -1;
+    int non_consecutive_frames = 0;
 
     for (size_t frame_idx = 0; frame_idx < results.size(); ++frame_idx)
     {
@@ -213,6 +218,13 @@ void TestAxiDmaCyclicSingleChannel()
         }
 
         int frame_number = frame[0];
+
+        if (prev_frame_number != -1 && frame_number != prev_frame_number + 1)
+        {
+            non_consecutive_frames++;
+        }
+        prev_frame_number = frame_number;
+
         bool frame_valid = true;
         int frame_word_errors = 0;
 
@@ -242,6 +254,7 @@ void TestAxiDmaCyclicSingleChannel()
     SPDLOG_INFO("Correct frames: {}", correct_frames);
     SPDLOG_INFO("Incorrect frames: {}", incorrect_frames);
     SPDLOG_INFO("Frame integrity rate: {:.2f}%", (correct_frames * 100.0) / results.size());
+    SPDLOG_INFO("Non-consecutive frame transitions: {}", non_consecutive_frames);
 }
 
 int main()

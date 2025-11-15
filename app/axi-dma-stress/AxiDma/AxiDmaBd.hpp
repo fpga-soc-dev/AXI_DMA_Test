@@ -71,6 +71,7 @@ namespace Dma
         std::uint8_t *GetBaseAddress() const;
         bool XAxiDmaBdSetLength(std::uint32_t len_bytes, std::uint32_t len_mask);
         bool XAxiDmaBdSetBufAddr(std::uint64_t phys_addr);
+        std::uint32_t XAxiDmaBdGetBufAddr();
         bool XAxiDmaBdSetBufAddrMicroMode(std::uint64_t phys_addr);
         bool XAxiDmaBdSetNextDescOffset(std::uint64_t phys_addr);
 

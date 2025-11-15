@@ -275,31 +275,26 @@ namespace Dma
         if (m_Config.HasScatterGather && m_RxBdRing && m_CacheManager)
         {
 
-            static int processed_frames = 0;
-            std::uintptr_t buffer_base = m_CacheManager->GetPhysicalAddress(m_RxDataBufferConfig.buffer_name);
-
             std::byte *buffer_base_virt = m_CacheManager->BufferPtr(m_RxDataBufferConfig.buffer_name);
             int bd_count = m_RxBdRing->m_AllCnt;
 
-            std::size_t data_offset = (processed_frames * m_RxFrameSize) % (m_RxFrameSize * bd_count);
-            std::size_t bd_offset = (processed_frames % bd_count) * m_RxBdRing->m_Separation;
+            std::uint32_t current_desc = m_RxChannel->XAxiDmaGetCurrentDescriptorLow();
+            std::uint32_t first_bd_phys = static_cast<std::uint32_t>(m_RxBdRing->m_FirstBdPhysAddr);
+
+            int current_bd_index = (current_desc - first_bd_phys) / m_RxBdRing->m_Separation;
+            int completed_bd_index = (current_bd_index - 1 + bd_count) % bd_count;
+
+            std::size_t data_offset = completed_bd_index * m_RxFrameSize;
+            std::size_t bd_offset = completed_bd_index * m_RxBdRing->m_Separation;
 
             m_CurrentRxBufferAddr = reinterpret_cast<std::uintptr_t>(buffer_base_virt + data_offset);
 
-            SPDLOG_TRACE("Invalidating caches: frame={}, BD_addr=0x{:X}, data_addr=0x{:X}, data_offset=0x{:X}",
-                         processed_frames, bd_offset, m_CurrentRxBufferAddr, data_offset);
-
-            m_CacheManager->InvalidateCache(m_RxRingBufferConfig.buffer_name,
-                                            bd_offset, m_RxBdRing->m_Separation,
-                                            UDmaBuffer::SyncDirection::DMA_FROM_DEVICE);
+            m_CacheManager->InvalidateCache(m_RxRingBufferConfig.buffer_name);
 
             m_CacheManager->InvalidateCache(m_RxDataBufferConfig.buffer_name,
                                             data_offset, m_RxFrameSize,
                                             UDmaBuffer::SyncDirection::DMA_FROM_DEVICE);
-
-            processed_frames++;
         }
-
         else if (!m_Config.HasScatterGather && m_CacheManager)
         {
             m_CacheManager->InvalidateCache(m_RxDataBufferConfig.buffer_name);
@@ -498,12 +493,12 @@ namespace Dma
 
             rx_buffer_address += frame_size;
             bd_curr_ptr.SetBaseAddress(m_RxBdRing->XAxiDmaBdRingNext(bd_curr_ptr.GetBaseAddress()));
-            SPDLOG_TRACE("RX Data Buffer[{}] configured, buf_addr={:08x}, length={}", index,
+            SPDLOG_DEBUG("RX Data Buffer[{}] configured, buf_addr={:08x}, virt_addr={:08x}", index,
                          (unsigned int)(rx_buffer_address - frame_size),
-                         frame_size);
+                         (std::uintptr_t)(m_CacheManager->BufferPtr(m_RxDataBufferConfig.buffer_name) + (index * frame_size)));
         }
 
-        status = m_RxBdRing->XAxiDmaBdRingSetCoalesce(1, 0);
+        status = m_RxBdRing->XAxiDmaBdRingSetCoalesce(1, 100);
         if (!status)
         {
             SPDLOG_ERROR("Failed to set coalesce for Rx BD ring.");

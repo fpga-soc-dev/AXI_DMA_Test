@@ -209,7 +209,6 @@ namespace Dma
 
         /* At the end of the ring, link the last BD back to the top */
         current_bd.XAxiDmaBdSetNextDescOffset(static_cast<std::uint64_t>(phys_addr));
-
         /* Setup the last BD's hardware information */
         // AxiDmaBd::XAxiDmaBdWrite(bd_virt_addr, XAXIDMA_BD_HAS_STSCNTRL_OFFSET, static_cast<std::uint32_t>(m_HasStsCntrlStrm));
         // AxiDmaBd::XAxiDmaBdWrite(bd_virt_addr, XAXIDMA_BD_HAS_DRE_OFFSET, ((static_cast<std::uint32_t>(m_HasDRE) << XAXIDMA_BD_HAS_DRE_SHIFT) | m_DataWidth));
@@ -234,11 +233,11 @@ namespace Dma
         m_BdRestart.SetBaseAddress(bd_ptr);
 
         SPDLOG_INFO("BD Ring created successfully: {} BDs, separation={} bytes, total size={} bytes first=0x{:08X}, last=0x{:08X}", bd_count, m_Separation, m_Length, m_FirstBdPhysAddr, m_LastBdPhysAddr);
-        SPDLOG_TRACE("===== BD Ring Layout =====");
+        SPDLOG_DEBUG("===== BD Ring Layout =====");
         for (int i = 0; i < bd_count; i++)
         {
             std::uintptr_t bd_phys = phys_addr + (i * m_Separation);
-            SPDLOG_TRACE("BD[{}]: Phys=0x{:08X}", i, bd_phys);
+            SPDLOG_DEBUG("BD[{}]: Phys=0x{:08X} Virt=0x{:08X}", i, bd_phys, virt_addr + (i * m_Separation));
         }
 
         return true;
