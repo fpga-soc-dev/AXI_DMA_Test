@@ -209,7 +209,6 @@ namespace Dma
 
         m_RxDataBufferConfig.buffer_name = buffer_name;
         m_RxDataBufferConfig.size = buffer_size;
-        SPDLOG_INFO("Configured RX buffer: {} (size: {})", buffer_name, buffer_size);
     }
 
     void AxiDma::ConfigureRxRingBuffer(std::string buffer_name)
@@ -275,25 +274,35 @@ namespace Dma
         if (m_Config.HasScatterGather && m_RxBdRing && m_CacheManager)
         {
 
-            std::byte *buffer_base_virt = m_CacheManager->BufferPtr(m_RxDataBufferConfig.buffer_name);
-            int bd_count = m_RxBdRing->m_AllCnt;
+            std::uint8_t *bd_set_ptr = nullptr;
+            int completed_bds = m_RxBdRing->XAxiDmaBdRingFromHw(m_RxBdRing->m_AllCnt, &bd_set_ptr);
 
-            std::uint32_t current_desc = m_RxChannel->XAxiDmaGetCurrentDescriptorLow();
-            std::uint32_t first_bd_phys = static_cast<std::uint32_t>(m_RxBdRing->m_FirstBdPhysAddr);
+            if (completed_bds > 0)
+            {
+                AxiDmaBd current_bd;
+                current_bd.SetBaseAddress(bd_set_ptr);
 
-            int current_bd_index = (current_desc - first_bd_phys) / m_RxBdRing->m_Separation;
-            int completed_bd_index = (current_bd_index - 1 + bd_count) % bd_count;
+                std::uint32_t buffer_phys_addr = current_bd.XAxiDmaBdGetBufAddr();
+                std::uint32_t transfer_length = current_bd.XAxiDmaBdGetLength();
 
-            std::size_t data_offset = completed_bd_index * m_RxFrameSize;
-            std::size_t bd_offset = completed_bd_index * m_RxBdRing->m_Separation;
+                std::size_t data_offset = buffer_phys_addr - m_RxDataBaseAddr;
 
-            m_CurrentRxBufferAddr = reinterpret_cast<std::uintptr_t>(buffer_base_virt + data_offset);
+                std::byte *buffer_base_virt = m_CacheManager->BufferPtr(m_RxDataBufferConfig.buffer_name);
+                m_CurrentRxBufferAddr = reinterpret_cast<std::uintptr_t>(buffer_base_virt + data_offset);
 
-            m_CacheManager->InvalidateCache(m_RxRingBufferConfig.buffer_name);
+                m_CacheManager->InvalidateCache(m_RxDataBufferConfig.buffer_name,
+                                                data_offset, transfer_length,
+                                                UDmaBuffer::SyncDirection::DMA_FROM_DEVICE);
 
-            m_CacheManager->InvalidateCache(m_RxDataBufferConfig.buffer_name,
-                                            data_offset, m_RxFrameSize,
-                                            UDmaBuffer::SyncDirection::DMA_FROM_DEVICE);
+                if (m_RxBdRing->m_Cyclic)
+                {
+                    m_RxChannel->XAxiDmaSetTailDescriptor(m_RxBdRing->m_LastBdPhysAddr);
+                }
+            }
+            else
+            {
+                SPDLOG_DEBUG("No completed BDs found");
+            }
         }
         else if (!m_Config.HasScatterGather && m_CacheManager)
         {
@@ -335,7 +344,6 @@ namespace Dma
         }
 
         m_CacheManager->FlushCache(m_RxDataBufferConfig.buffer_name);
-        auto phys_addr = m_CacheManager->GetPhysicalAddress(m_RxDataBufferConfig.buffer_name);
 
         /*
         if (length > m_RxBdRing.m_MaxTransferLen)
@@ -343,7 +351,7 @@ namespace Dma
             SPDLOG_ERROR("Transfer length {} exceeds maximum allowed length {} for S2MM.", length, m_RxBdRing.m_MaxTransferLen);
             return false;
         }
-    */
+        */
         if (!m_Config.HasS2mm)
         {
             SPDLOG_ERROR("Simple transfer is not supported for S2MM.");
@@ -368,23 +376,23 @@ namespace Dma
         //     word = XAXIDMA_MICROMODE_MIN_BUF_ALIGN;
         // }
 
-        auto buffer_address = m_CacheManager->GetPhysicalAddress("udmabuf0");
-        if (buffer_address == 0)
+        m_RxDataBaseAddr = m_CacheManager->GetPhysicalAddress(m_RxDataBufferConfig.buffer_name);
+        if (m_RxDataBaseAddr == 0)
         {
             SPDLOG_ERROR("Failed to get physical address for RX buffer {}", m_RxDataBufferConfig.buffer_name);
             return false;
         }
         /*
-        if ((buffer_address & word) != 0)
+        if ((m_RxDataBaseAddr & word) != 0)
         {
             if (!m_Config.HasS2mmDRE)
             {
-                SPDLOG_ERROR("Unaligned transfer without DRE %x\r\n", buffer_address);
+                SPDLOG_ERROR("Unaligned transfer without DRE %x\r\n", m_RxDataBaseAddr);
                 return false;
             }
         }
         */
-        m_RxChannel->XAxiDmaSetDestinationAddress(buffer_address);
+        m_RxChannel->XAxiDmaSetDestinationAddress(m_RxDataBaseAddr);
         m_RxChannel->XAxiDmaStart();
         m_RxChannel->XAxiDmaLength(length);
 
@@ -416,13 +424,12 @@ namespace Dma
             return false;
         }
 
-        /* Disable all RX interrupts before RxBD space setup */
         m_RxChannel->XAxiDmaIntrDisable(true, true, true);
-        /* Setup Rx BD space */
         auto bd_count = m_RxBdRing->XAxiDmaBdRingCntCalc(AxiDmaBd::XAXIDMA_BD_MINIMUM_ALIGNMENT, m_RxRingBufferConfig.size);
         SPDLOG_DEBUG("Cyclic RX BD count calculated: {}", bd_count);
 
-        auto rx_bd_ring_phyaddr = m_CacheManager->GetPhysicalAddress(m_RxRingBufferConfig.buffer_name);
+        m_RxRingBaseAddr = m_CacheManager->GetPhysicalAddress(m_RxRingBufferConfig.buffer_name);
+        auto rx_bd_ring_phyaddr = m_RxRingBaseAddr;
         auto rx_bd_ring_virtaddr = reinterpret_cast<std::uintptr_t>(m_CacheManager->BufferPtr(m_RxRingBufferConfig.buffer_name));
 
         auto status = m_RxBdRing->XAxiDmaBdRingCreate(rx_bd_ring_phyaddr, rx_bd_ring_virtaddr, AxiDmaBd::XAXIDMA_BD_MINIMUM_ALIGNMENT, bd_count);
@@ -458,7 +465,8 @@ namespace Dma
         AxiDmaBd bd_curr_ptr;
         bd_curr_ptr.SetBaseAddress(bd_ptr.GetBaseAddress());
 
-        auto rx_buffer_address = m_CacheManager->GetPhysicalAddress(m_RxDataBufferConfig.buffer_name);
+        m_RxDataBaseAddr = m_CacheManager->GetPhysicalAddress(m_RxDataBufferConfig.buffer_name);
+        auto rx_buffer_address = m_RxDataBaseAddr;
         m_CurrentRxBufferAddr = rx_buffer_address;
 
         std::uint32_t frame_size = m_CacheManager->GetBufferSize(m_RxDataBufferConfig.buffer_name) / bd_count;
@@ -490,15 +498,13 @@ namespace Dma
 
             bd_curr_ptr.XAxiDmaBdSetCtrl(0);
             bd_curr_ptr.XAxiDmaBdSetId(rx_buffer_address);
+            SPDLOG_DEBUG("RX BD[{}], data_buf_addr={:08x}, BD Phys BaseAddr={:08x}, Next BD pointer={:08x}", index, bd_curr_ptr.XAxiDmaBdGetBufAddr(), m_RxBdRing->XAxiDmaVirtToPhys(bd_curr_ptr.GetBaseAddress()), bd_curr_ptr.XAxiDmaBdGetNextDescOffset());
 
             rx_buffer_address += frame_size;
             bd_curr_ptr.SetBaseAddress(m_RxBdRing->XAxiDmaBdRingNext(bd_curr_ptr.GetBaseAddress()));
-            SPDLOG_DEBUG("RX Data Buffer[{}] configured, buf_addr={:08x}, virt_addr={:08x}", index,
-                         (unsigned int)(rx_buffer_address - frame_size),
-                         (std::uintptr_t)(m_CacheManager->BufferPtr(m_RxDataBufferConfig.buffer_name) + (index * frame_size)));
         }
 
-        status = m_RxBdRing->XAxiDmaBdRingSetCoalesce(1, 100);
+        status = m_RxBdRing->XAxiDmaBdRingSetCoalesce(1, 10);
         if (!status)
         {
             SPDLOG_ERROR("Failed to set coalesce for Rx BD ring.");
@@ -530,8 +536,16 @@ namespace Dma
 
     bool AxiDma::XAxiDmaRxCyclicTransfer()
     {
-        RxBdRingSetup();
-        return true;
+        if (RxBdRingSetup())
+        {
+            SPDLOG_INFO("Cyclic RX transfer started successfully.");
+            return true;
+        }
+        else
+        {
+            SPDLOG_ERROR("Failed to start cyclic RX transfer.");
+            return false;
+        }
     }
 
     std::uint64_t AxiDma::GetCurrentDescriptor() const

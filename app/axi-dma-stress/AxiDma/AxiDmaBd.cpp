@@ -251,6 +251,17 @@ namespace Dma
         return true;
     }
 
+    std::uint32_t AxiDmaBd::XAxiDmaBdGetNextDescOffset()
+    {
+        if (m_Base == nullptr)
+        {
+            SPDLOG_ERROR("Error get next desc addr, bd base is null");
+            return 0;
+        }
+
+        return (XAxiDmaBdRead(XAXIDMA_BD_NDESC_OFFSET));
+    }
+
     void AxiDmaBd::XAxiDmaBdDump()
     {
         SPDLOG_TRACE("=== AXI DMA BD @ %p ===\n", static_cast<void *>(m_Base));

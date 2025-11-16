@@ -84,7 +84,6 @@ namespace Dma
         // RX Channel
         if (!m_RingIndex)
         {
-            // first RX ring
             if (!m_Addr_ext)
             {
                 auto reg_value = m_Channel->XAxiDmaGetCurrentDescriptorLow();
@@ -123,8 +122,6 @@ namespace Dma
     std::uint32_t XAxiDmaBdRing::XAxiDmaBdRingCntCalc(std::uint32_t alignment, std::uint32_t buffer_size)
     {
         std::uint32_t alignedSize = (AxiDmaBd::BD_SIZE_BYTES + (alignment - 1)) & ~((alignment)-1);
-        SPDLOG_DEBUG("Aligned BD size: {} bytes", alignedSize);
-        SPDLOG_DEBUG("Buffer size: {} bytes", buffer_size);
         return buffer_size / alignedSize;
     }
 
@@ -170,7 +167,6 @@ namespace Dma
 
         /* Compute how many bytes will be between the start of adjacent BDs */
         m_Separation = (AxiDmaBd::BD_SIZE_BYTES + (alignment - 1)) & ~(alignment - 1);
-        SPDLOG_DEBUG("BD Separation set to {} bytes", m_Separation);
 
         /* Must make sure the ring doesn't span address 0x00000000. If it does,
          * then the next/prev BD traversal macros will fail.
@@ -208,6 +204,7 @@ namespace Dma
         }
 
         /* At the end of the ring, link the last BD back to the top */
+        current_bd.SetBaseAddress(reinterpret_cast<std::uint8_t *>(bd_virt_addr));
         current_bd.XAxiDmaBdSetNextDescOffset(static_cast<std::uint64_t>(phys_addr));
         /* Setup the last BD's hardware information */
         current_bd.XAxiDmaBdSetStsCtrlStrm(m_HasStsCntrlStrm);
@@ -233,12 +230,6 @@ namespace Dma
         m_BdRestart.SetBaseAddress(bd_ptr);
 
         SPDLOG_INFO("BD Ring created successfully: {} BDs, separation={} bytes, total size={} bytes first=0x{:08X}, last=0x{:08X}", bd_count, m_Separation, m_Length, m_FirstBdPhysAddr, m_LastBdPhysAddr);
-        SPDLOG_DEBUG("===== BD Ring Layout =====");
-        for (int i = 0; i < bd_count; i++)
-        {
-            std::uintptr_t bd_phys = phys_addr + (i * m_Separation);
-            SPDLOG_DEBUG("BD[{}]: Phys=0x{:08X} Virt=0x{:08X}", i, bd_phys, virt_addr + (i * m_Separation));
-        }
 
         return true;
     }
@@ -286,8 +277,6 @@ namespace Dma
         }
 
         m_CacheManager->FlushCache(m_BdBufferName);
-
-        SPDLOG_INFO("BD Ring cloned successfully from template BD");
         return true;
     }
 
@@ -312,7 +301,6 @@ namespace Dma
         m_FreeCnt -= num_bd;
         m_PreCnt += num_bd;
 
-        SPDLOG_INFO("Allocated {} BDs from ring, {} BDs remaining free", num_bd, m_FreeCnt);
         return true;
     }
 
@@ -728,15 +716,11 @@ namespace Dma
 
         while (bd_count < bd_limit)
         {
-            m_CacheManager->InvalidateCache(m_BdBufferName, reinterpret_cast<std::uintptr_t>(cur_bd_ptr.GetBaseAddress()) - m_FirstBdAddr, m_Separation, UDmaBuffer::SyncDirection::DMA_FROM_DEVICE);
-            /* Read the status */
-            // XAXIDMA_CACHE_INVALIDATE(CurBdPtr);
+            m_CacheManager->InvalidateCache(m_BdBufferName);
             bd_sts = cur_bd_ptr.XAxiDmaBdGetSts();
             bd_cr = cur_bd_ptr.XAxiDmaBdGetCtrl();
 
-            /* If the hardware still hasn't processed this BD then we are
-             * done
-             */
+            /* If the hardware still hasn't processed this BD then we are done*/
             if (!(bd_sts & AxiDmaBd::XAXIDMA_BD_STS_COMPLETE_MASK))
             {
                 break;
@@ -766,7 +750,7 @@ namespace Dma
                 bd_sts = bd_sts & ~AxiDmaBd::XAXIDMA_BD_STS_COMPLETE_MASK;
                 cur_bd_ptr.XAxiDmaBdSetSts(bd_sts);
 
-                m_CacheManager->FlushCache(m_BdBufferName, reinterpret_cast<std::uintptr_t>(cur_bd_ptr.GetBaseAddress()) - m_FirstBdAddr, m_Separation, UDmaBuffer::SyncDirection::DMA_TO_DEVICE);
+                m_CacheManager->FlushCache(m_BdBufferName);
             }
 
             /* Reached the end of the work group */

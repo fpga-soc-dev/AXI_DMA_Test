@@ -82,6 +82,7 @@ namespace Dma
         std::uint32_t XAxiDmaBdGetBufAddr();
         bool XAxiDmaBdSetBufAddrMicroMode(std::uint64_t phys_addr);
         bool XAxiDmaBdSetNextDescOffset(std::uint64_t phys_addr);
+        std::uint32_t XAxiDmaBdGetNextDescOffset();
 
         bool XAxiDmaBdSetAppWord(std::uint32_t index, std::uint32_t value);
         std::uint32_t XAxiDmaBdGetAppWord(std::uint32_t index, int &valid);

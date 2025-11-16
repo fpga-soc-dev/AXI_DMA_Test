@@ -39,7 +39,7 @@ if { [string first $scripts_vivado_version $current_vivado_version] == -1 } {
 
 # The design that will be created by this Tcl script contains the following 
 # module references:
-# DataGenerator, DataGenerator, DataGenerator
+# DataGenerator, DataGenerator
 
 # Please add the sources of those modules before sourcing this Tcl script.
 
@@ -159,7 +159,6 @@ xilinx.com:ip:axi_dma:*\
 set bCheckModules 1
 if { $bCheckModules == 1 } {
    set list_check_mods "\ 
-DataGenerator\
 DataGenerator\
 DataGenerator\
 "
@@ -739,7 +738,7 @@ proc create_root_design { parentCell } {
     CONFIG.PCW_USE_S_AXI_GP1 {0} \
     CONFIG.PCW_USE_S_AXI_HP0 {1} \
     CONFIG.PCW_USE_S_AXI_HP1 {1} \
-    CONFIG.PCW_USE_S_AXI_HP2 {1} \
+    CONFIG.PCW_USE_S_AXI_HP2 {0} \
     CONFIG.PCW_USE_S_AXI_HP3 {0} \
     CONFIG.PCW_USE_TRACE {0} \
     CONFIG.PCW_VALUE_SILVERSION {3} \
@@ -752,7 +751,7 @@ proc create_root_design { parentCell } {
   # Create instance: ps_ctrl_axi, and set properties
   set ps_ctrl_axi [ create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect ps_ctrl_axi ]
   set_property -dict [list \
-    CONFIG.NUM_MI {6} \
+    CONFIG.NUM_MI {4} \
     CONFIG.NUM_SI {1} \
   ] $ps_ctrl_axi
 
@@ -821,48 +820,12 @@ proc create_root_design { parentCell } {
   ] $smartconnect_1
 
 
-  # Create instance: axi_dma_2, and set properties
-  set axi_dma_2 [ create_bd_cell -type ip -vlnv xilinx.com:ip:axi_dma axi_dma_2 ]
-  set_property -dict [list \
-    CONFIG.c_enable_multi_channel {0} \
-    CONFIG.c_include_mm2s {0} \
-    CONFIG.c_include_sg {1} \
-    CONFIG.c_s2mm_burst_size {128} \
-    CONFIG.c_sg_length_width {26} \
-  ] $axi_dma_2
-
-
-  # Create instance: smartconnect_2, and set properties
-  set smartconnect_2 [ create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect smartconnect_2 ]
-  set_property -dict [list \
-    CONFIG.NUM_MI {1} \
-    CONFIG.NUM_SI {2} \
-  ] $smartconnect_2
-
-
-  # Create instance: DataGenerator_2, and set properties
-  set block_name DataGenerator
-  set block_cell_name DataGenerator_2
-  if { [catch {set DataGenerator_2 [create_bd_cell -type module -reference $block_name $block_cell_name] } errmsg] } {
-     catch {common::send_gid_msg -ssname BD::TCL -id 2095 -severity "ERROR" "Unable to add referenced block <$block_name>. Please add the files for ${block_name}'s definition into the project."}
-     return 1
-   } elseif { $DataGenerator_2 eq "" } {
-     catch {common::send_gid_msg -ssname BD::TCL -id 2096 -severity "ERROR" "Unable to referenced block <$block_name>. Please add the files for ${block_name}'s definition into the project."}
-     return 1
-   }
-  
   # Create interface connections
   connect_bd_intf_net -intf_net DataGenerator_0_m_axis [get_bd_intf_pins DataGenerator_0/m_axis] [get_bd_intf_pins axi_dma_0/S_AXIS_S2MM]
-  set_property HDL_ATTRIBUTE.DEBUG {true} [get_bd_intf_nets DataGenerator_0_m_axis]
   connect_bd_intf_net -intf_net DataGenerator_1_m_axis [get_bd_intf_pins DataGenerator_1/m_axis] [get_bd_intf_pins axi_dma_1/S_AXIS_S2MM]
-  set_property HDL_ATTRIBUTE.DEBUG {true} [get_bd_intf_nets DataGenerator_1_m_axis]
-  connect_bd_intf_net -intf_net DataGenerator_2_m_axis [get_bd_intf_pins DataGenerator_2/m_axis] [get_bd_intf_pins axi_dma_2/S_AXIS_S2MM]
-  set_property HDL_ATTRIBUTE.DEBUG {true} [get_bd_intf_nets DataGenerator_2_m_axis]
   connect_bd_intf_net -intf_net axi_dma_0_M_AXI_S2MM [get_bd_intf_pins axi_dma_0/M_AXI_S2MM] [get_bd_intf_pins smartconnect_0/S00_AXI]
   connect_bd_intf_net -intf_net axi_dma_1_M_AXI_S2MM [get_bd_intf_pins axi_dma_1/M_AXI_S2MM] [get_bd_intf_pins smartconnect_1/S00_AXI]
   connect_bd_intf_net -intf_net axi_dma_1_M_AXI_SG [get_bd_intf_pins axi_dma_1/M_AXI_SG] [get_bd_intf_pins smartconnect_1/S01_AXI]
-  connect_bd_intf_net -intf_net axi_dma_2_M_AXI_S2MM [get_bd_intf_pins axi_dma_2/M_AXI_S2MM] [get_bd_intf_pins smartconnect_2/S01_AXI]
-  connect_bd_intf_net -intf_net axi_dma_2_M_AXI_SG [get_bd_intf_pins axi_dma_2/M_AXI_SG] [get_bd_intf_pins smartconnect_2/S00_AXI]
   connect_bd_intf_net -intf_net ps7_0_DDR [get_bd_intf_ports DDR] [get_bd_intf_pins ps7_0/DDR]
   connect_bd_intf_net -intf_net ps7_0_FIXED_IO [get_bd_intf_ports FIXED_IO] [get_bd_intf_pins ps7_0/FIXED_IO]
   connect_bd_intf_net -intf_net ps7_0_M_AXI_GP0 [get_bd_intf_pins ps7_0/M_AXI_GP0] [get_bd_intf_pins ps_ctrl_axi/S00_AXI]
@@ -870,27 +833,18 @@ proc create_root_design { parentCell } {
   connect_bd_intf_net -intf_net ps_ctrl_axi_M01_AXI [get_bd_intf_pins ps_ctrl_axi/M01_AXI] [get_bd_intf_pins axi_dma_0/S_AXI_LITE]
   connect_bd_intf_net -intf_net ps_ctrl_axi_M02_AXI [get_bd_intf_pins ps_ctrl_axi/M02_AXI] [get_bd_intf_pins axi_dma_1/S_AXI_LITE]
   connect_bd_intf_net -intf_net ps_ctrl_axi_M03_AXI [get_bd_intf_pins ps_ctrl_axi/M03_AXI] [get_bd_intf_pins DataGenerator_1/s_axi]
-  connect_bd_intf_net -intf_net ps_ctrl_axi_M04_AXI [get_bd_intf_pins ps_ctrl_axi/M04_AXI] [get_bd_intf_pins axi_dma_2/S_AXI_LITE]
-  connect_bd_intf_net -intf_net ps_ctrl_axi_M05_AXI [get_bd_intf_pins DataGenerator_2/s_axi] [get_bd_intf_pins ps_ctrl_axi/M05_AXI]
   connect_bd_intf_net -intf_net smartconnect_0_M00_AXI [get_bd_intf_pins smartconnect_0/M00_AXI] [get_bd_intf_pins ps7_0/S_AXI_HP0]
   connect_bd_intf_net -intf_net smartconnect_1_M00_AXI [get_bd_intf_pins smartconnect_1/M00_AXI] [get_bd_intf_pins ps7_0/S_AXI_HP1]
-  connect_bd_intf_net -intf_net smartconnect_2_M00_AXI [get_bd_intf_pins smartconnect_2/M00_AXI] [get_bd_intf_pins ps7_0/S_AXI_HP2]
 
   # Create port connections
   connect_bd_net -net axi_dma_0_s2mm_introut  [get_bd_pins axi_dma_0/s2mm_introut] \
   [get_bd_pins xlconcat_0/In0] \
   [get_bd_pins DataGenerator_0/dma_introut]
-  set_property HDL_ATTRIBUTE.DEBUG {true} [get_bd_nets axi_dma_0_s2mm_introut]
   connect_bd_net -net axi_dma_0_s2mm_prmry_reset_out_n  [get_bd_pins axi_dma_0/s2mm_prmry_reset_out_n] \
   [get_bd_ports LED3]
   connect_bd_net -net axi_dma_1_s2mm_introut  [get_bd_pins axi_dma_1/s2mm_introut] \
   [get_bd_pins xlconcat_0/In1] \
   [get_bd_pins DataGenerator_1/dma_introut]
-  set_property HDL_ATTRIBUTE.DEBUG {true} [get_bd_nets axi_dma_1_s2mm_introut]
-  connect_bd_net -net axi_dma_2_s2mm_introut  [get_bd_pins axi_dma_2/s2mm_introut] \
-  [get_bd_pins xlconcat_0/In2] \
-  [get_bd_pins DataGenerator_2/dma_introut]
-  set_property HDL_ATTRIBUTE.DEBUG {true} [get_bd_nets axi_dma_2_s2mm_introut]
   connect_bd_net -net ps7_0_FCLK_CLK0  [get_bd_pins ps7_0/FCLK_CLK0] \
   [get_bd_ports CLK100] \
   [get_bd_pins rst_clk_wiz_0_100M/slowest_sync_clk]
@@ -910,14 +864,7 @@ proc create_root_design { parentCell } {
   [get_bd_pins DataGenerator_0/s_axi_aclk] \
   [get_bd_pins DataGenerator_0/m_axis_aclk] \
   [get_bd_pins DataGenerator_1/s_axi_aclk] \
-  [get_bd_pins DataGenerator_1/m_axis_aclk] \
-  [get_bd_pins ps7_0/S_AXI_HP2_ACLK] \
-  [get_bd_pins smartconnect_2/aclk] \
-  [get_bd_pins axi_dma_2/m_axi_sg_aclk] \
-  [get_bd_pins axi_dma_2/s_axi_lite_aclk] \
-  [get_bd_pins axi_dma_2/m_axi_s2mm_aclk] \
-  [get_bd_pins DataGenerator_2/s_axi_aclk] \
-  [get_bd_pins DataGenerator_2/m_axis_aclk]
+  [get_bd_pins DataGenerator_1/m_axis_aclk]
   connect_bd_net -net ps7_0_FCLK_RESET0_N  [get_bd_pins ps7_0/FCLK_RESET0_N] \
   [get_bd_pins rst_clk_wiz_0_100M/ext_reset_in] \
   [get_bd_ports FCLK_RESET_N] \
@@ -929,29 +876,21 @@ proc create_root_design { parentCell } {
   [get_bd_pins DataGenerator_0/s_axi_aresetn] \
   [get_bd_pins DataGenerator_0/m_axis_aresetn] \
   [get_bd_pins DataGenerator_1/s_axi_aresetn] \
-  [get_bd_pins DataGenerator_1/m_axis_aresetn] \
-  [get_bd_pins smartconnect_2/aresetn] \
-  [get_bd_pins DataGenerator_2/s_axi_aresetn] \
-  [get_bd_pins DataGenerator_2/m_axis_aresetn]
+  [get_bd_pins DataGenerator_1/m_axis_aresetn]
   connect_bd_net -net rst_clk_wiz_0_200M_peripheral_aresetn  [get_bd_pins rst_clk_wiz_0_200M/peripheral_aresetn] \
   [get_bd_pins axi_dma_0/axi_resetn] \
-  [get_bd_pins axi_dma_1/axi_resetn] \
-  [get_bd_pins axi_dma_2/axi_resetn]
+  [get_bd_pins axi_dma_1/axi_resetn]
   connect_bd_net -net tpg_top_interrupt  [get_bd_pins xlconcat_0/dout] \
   [get_bd_pins ps7_0/IRQ_F2P]
 
   # Create address segments
   assign_bd_address -offset 0x40000000 -range 0x00001000 -target_address_space [get_bd_addr_spaces ps7_0/Data] [get_bd_addr_segs DataGenerator_0/s_axi/reg0] -force
   assign_bd_address -offset 0x40001000 -range 0x00001000 -target_address_space [get_bd_addr_spaces ps7_0/Data] [get_bd_addr_segs DataGenerator_1/s_axi/reg0] -force
-  assign_bd_address -offset 0x40002000 -range 0x00001000 -target_address_space [get_bd_addr_spaces ps7_0/Data] [get_bd_addr_segs DataGenerator_2/s_axi/reg0] -force
   assign_bd_address -offset 0x40400000 -range 0x00010000 -target_address_space [get_bd_addr_spaces ps7_0/Data] [get_bd_addr_segs axi_dma_0/S_AXI_LITE/Reg] -force
   assign_bd_address -offset 0x40410000 -range 0x00010000 -target_address_space [get_bd_addr_spaces ps7_0/Data] [get_bd_addr_segs axi_dma_1/S_AXI_LITE/Reg] -force
-  assign_bd_address -offset 0x40420000 -range 0x00010000 -target_address_space [get_bd_addr_spaces ps7_0/Data] [get_bd_addr_segs axi_dma_2/S_AXI_LITE/Reg] -force
   assign_bd_address -offset 0x00000000 -range 0x20000000 -target_address_space [get_bd_addr_spaces axi_dma_0/Data_S2MM] [get_bd_addr_segs ps7_0/S_AXI_HP0/HP0_DDR_LOWOCM] -force
   assign_bd_address -offset 0x00000000 -range 0x20000000 -target_address_space [get_bd_addr_spaces axi_dma_1/Data_S2MM] [get_bd_addr_segs ps7_0/S_AXI_HP1/HP1_DDR_LOWOCM] -force
   assign_bd_address -offset 0x00000000 -range 0x20000000 -target_address_space [get_bd_addr_spaces axi_dma_1/Data_SG] [get_bd_addr_segs ps7_0/S_AXI_HP1/HP1_DDR_LOWOCM] -force
-  assign_bd_address -offset 0x00000000 -range 0x20000000 -target_address_space [get_bd_addr_spaces axi_dma_2/Data_S2MM] [get_bd_addr_segs ps7_0/S_AXI_HP2/HP2_DDR_LOWOCM] -force
-  assign_bd_address -offset 0x00000000 -range 0x20000000 -target_address_space [get_bd_addr_spaces axi_dma_2/Data_SG] [get_bd_addr_segs ps7_0/S_AXI_HP2/HP2_DDR_LOWOCM] -force
 
 
   # Restore current instance
