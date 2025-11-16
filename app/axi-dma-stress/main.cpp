@@ -155,7 +155,7 @@ void TestAxiDmaCyclicSingleChannel()
         .AddressWidth = 32,
         .BufferLengthRegister = 26};
 
-    static constexpr uint32_t TEST_SAMPLE_COUNT = 1024 * 8; // 8K samples per frame
+    static constexpr uint32_t TEST_SAMPLE_COUNT = 1024 * 16;
     static constexpr uint32_t TEST_FRAME_INTERVAL_US = 1000u;
 
     std::vector<std::vector<int>> results;
@@ -198,7 +198,7 @@ void TestAxiDmaCyclicSingleChannel()
         std::vector<int> current_frame;
         current_frame.reserve(frame_size_words);
         for (size_t i = 0; i < frame_size_words; ++i) {
-            current_frame.push_back(static_cast<int>(buffer_start[i]));
+            current_frame.push_back(buffer_start[i]);
         }
         results.push_back(std::move(current_frame));
           
@@ -263,9 +263,9 @@ void TestAxiDmaCyclicSingleChannel()
         bool frame_valid = true;
         int frame_word_errors = 0;
 
-        for (size_t i = 1; i < frame.size(); ++i)
+        for (int i = 1; i < frame.size(); ++i)
         {
-            int expected_value = frame_number + static_cast<int>(i);
+            int expected_value = frame_number + i;
             if (frame[i] != expected_value)
             {
                 frame_word_errors++;
