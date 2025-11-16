@@ -299,19 +299,20 @@ namespace Dma
                     m_RxChannel->XAxiDmaSetTailDescriptor(m_RxBdRing->m_LastBdPhysAddr);
                 }
             }
-            else
+
+            if (completed_bds > 0 && m_RxCallback)
             {
-                SPDLOG_DEBUG("No completed BDs found");
+                m_RxCallback();
             }
         }
         else if (!m_Config.HasScatterGather && m_CacheManager)
         {
             m_CacheManager->InvalidateCache(m_RxDataBufferConfig.buffer_name);
-        }
 
-        if (m_RxCallback)
-        {
-            m_RxCallback();
+            if (m_RxCallback)
+            {
+                m_RxCallback();
+            }
         }
     }
 
@@ -426,7 +427,6 @@ namespace Dma
 
         m_RxChannel->XAxiDmaIntrDisable(true, true, true);
         auto bd_count = m_RxBdRing->XAxiDmaBdRingCntCalc(AxiDmaBd::XAXIDMA_BD_MINIMUM_ALIGNMENT, m_RxRingBufferConfig.size);
-        SPDLOG_DEBUG("Cyclic RX BD count calculated: {}", bd_count);
 
         m_RxRingBaseAddr = m_CacheManager->GetPhysicalAddress(m_RxRingBufferConfig.buffer_name);
         auto rx_bd_ring_phyaddr = m_RxRingBaseAddr;
@@ -504,7 +504,7 @@ namespace Dma
             bd_curr_ptr.SetBaseAddress(m_RxBdRing->XAxiDmaBdRingNext(bd_curr_ptr.GetBaseAddress()));
         }
 
-        status = m_RxBdRing->XAxiDmaBdRingSetCoalesce(1, 10);
+        status = m_RxBdRing->XAxiDmaBdRingSetCoalesce(1, 0);
         if (!status)
         {
             SPDLOG_ERROR("Failed to set coalesce for Rx BD ring.");
