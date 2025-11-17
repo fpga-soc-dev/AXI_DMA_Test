@@ -24,8 +24,6 @@ void AxiDataGen::SetConfig(uint32_t frame_samples, uint32_t frame_period)
                                                      DATA_GENERATOR_FREQ,
                                                      frame_samples);
 
-    SPDLOG_INFO("Configuring for {} samples per frame and calculated clock cycles per data word {} for {} us frame period", frame_samples, calculated_period + 1, desired_interval_us);
-
     m_UioDevice->Write(SAMPLE_PERIOD, calculated_period);
     if (m_UioDevice->Read(SAMPLE_PERIOD) != calculated_period)
     {
@@ -67,37 +65,36 @@ void AxiDataGen::Start()
     m_UioDevice->Write(CONTROL, CONTROL_ENABLE_BIT | CONTROL_ARM_INTERVAL_BIT);
 }
 
-uint32_t AxiDataGen::ComputeSamplePeriod(uint32_t interval_us, uint32_t axi_clock_freq, uint32_t frame_samples)
+uint32_t AxiDataGen::ComputeSamplePeriod(uint32_t interval_us,
+                                         uint32_t axi_clock_freq,
+                                         uint32_t frame_samples)
 {
+    const uint64_t total_target_clocks = (static_cast<uint64_t>(interval_us) *
+                                          static_cast<uint64_t>(axi_clock_freq)) /
+                                         1'000'000u;
 
-    // First, calculate the total number of clock cycles for the entire frame
-    // (interval_us * axi_clock_freq) / 1,000,000
-    const uint64_t total_clocks = (static_cast<uint64_t>(interval_us) *
-                                   static_cast<uint64_t>(axi_clock_freq)) /
-                                  1'000'000u;
+    const uint64_t data_transfer_clocks = static_cast<uint64_t>(frame_samples);
 
-    // Now, divide total clocks by the number of samples to find
-    // how many clocks each sample gets (this is P+1)
-    // We add (frame_samples / 2) for rounding.
-    uint64_t clocks_per_sample = (total_clocks + frame_samples / 2u) / frame_samples;
-
-    // The minimum (P+1) can be is 1 (which means P=0).
-    // If the interval is too fast, clocks_per_sample could be 0.
-    if (clocks_per_sample < 1ull)
+    if (total_target_clocks <= data_transfer_clocks)
     {
-        clocks_per_sample = 1ull; // Force to minimum (P=0)
+        SPDLOG_WARN("Requested interval too small to accommodate data transfer. Setting SAMPLE_PERIOD to 0.");
+        return 0;
     }
-
-    // P = (P+1) - 1
-    uint64_t sample_period = clocks_per_sample - 1;
-
-    // Clamp to the max 32-bit register size
-    if (sample_period > 0xFFFFFFFFull)
+    else
     {
-        sample_period = 0xFFFFFFFFull;
-    }
+        uint64_t gap_clocks = total_target_clocks - data_transfer_clocks;
 
-    return static_cast<uint32_t>(sample_period);
+        if (gap_clocks > 0xFFFFFFFFull)
+        {
+            gap_clocks = 0xFFFFFFFFull;
+        }
+        SPDLOG_DEBUG("Computed SAMPLE_PERIOD: interval_us={}, total_target_clocks={}, data_transfer_clocks={}, gap_clocks={}",
+                     interval_us,
+                     total_target_clocks,
+                     data_transfer_clocks,
+                     gap_clocks);
+        return static_cast<uint32_t>(gap_clocks);
+    }
 }
 
 uint32_t AxiDataGen::GetFrameSize()

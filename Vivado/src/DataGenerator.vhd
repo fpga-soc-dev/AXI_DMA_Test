@@ -148,7 +148,7 @@ architecture rtl of DataGenerator is
     signal div_cnt    : unsigned(31 downto 0) := (others => '0');
     signal gap_cnt    : unsigned(6 downto 0)  := (others => '0');
 
-    type t_fsm_state is (FSM_IDLE, FSM_WAIT_DIVIDER, FSM_SEND_WORD, FSM_WAIT_TREADY, FSM_POST_GAP);
+    type t_fsm_state is (FSM_IDLE, FSM_WAIT_DIVIDER, FSM_SEND_DATA);
     signal fsm_state : t_fsm_state := FSM_IDLE;
 
     signal tvalid_i      : std_logic                     := '0';
@@ -561,24 +561,16 @@ begin
                         end if;
 
                     when FSM_WAIT_DIVIDER =>
-                        frame_valid_i <= '1';
+                        frame_valid_i <= '0';
                         if div_cnt = reg_sample_period then
                             div_cnt   <= (others => '0');
-                            fsm_state <= FSM_SEND_WORD;
+                            fsm_state <= FSM_SEND_DATA;
                         else
                             div_cnt   <= div_cnt + 1;
                             fsm_state <= FSM_WAIT_DIVIDER;
                         end if;
 
-                    when FSM_SEND_WORD =>
-                        frame_valid_i <= '1';
-                        if sample_idx = reg_frame_samples - 1 then
-                            tlast_i <= '1';
-                        end if;
-
-                        fsm_state <= FSM_WAIT_TREADY;
-
-                    when FSM_WAIT_TREADY =>
+                    when FSM_SEND_DATA =>
 
                         if sample_idx = to_unsigned(0, 32) then
                             tdata_i <= std_logic_vector(frame_id);
@@ -588,25 +580,25 @@ begin
 
                         if sample_idx = reg_frame_samples - 1 then
                             tlast_i <= '1';
+                        else
+                            tlast_i <= '0';
                         end if;
 
+                        tvalid_i      <= '1';
+                        frame_valid_i <= '1';
+
                         if m_axis_tready = '1' then
-                            frame_valid_i <= '1';
-                            tvalid_i      <= '1';
                             if sample_idx = reg_frame_samples - 1 then
                                 frame_id   <= frame_id + 1;
                                 sample_idx <= (others => '0');
                                 fsm_state  <= FSM_IDLE;
                             else
                                 sample_idx <= sample_idx + 1;
-                                fsm_state  <= FSM_WAIT_DIVIDER;
+                                fsm_state  <= FSM_SEND_DATA;
                             end if;
-
+                        else
+                            fsm_state <= FSM_SEND_DATA;
                         end if;
-
-                    when FSM_POST_GAP =>
-                        fsm_state <= FSM_IDLE;
-
                 end case;
             end if;
         end if;
