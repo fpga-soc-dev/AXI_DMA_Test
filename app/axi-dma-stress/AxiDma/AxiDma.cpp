@@ -567,4 +567,53 @@ namespace Dma
         return reinterpret_cast<std::uint32_t *>(m_CurrentRxBufferAddr);
     }
 
+    bool AxiDma::ReadInterruptStatusRx() const
+    {
+        auto irq_status = m_RxChannel->XAxiDmaGetAllInterrupts();
+        return irq_status;
+    }
+
+    void AxiDma::AckInterruptRx(uint32_t irq_status)
+    {
+        m_RxChannel->XAxiDmaAckInterrupts(irq_status);
+    }
+
+    void AxiDma::ClearInterruptsRx()
+    {
+        m_RxChannel->XAxiDmaClearAllInterrupts();
+    }
+
+    void AxiDma::ProcessCompletedBDsRx()
+    {
+        if (m_Config.HasScatterGather && m_RxBdRing && m_CacheManager)
+        {
+
+            std::uint8_t *bd_set_ptr = nullptr;
+            int completed_bds = m_RxBdRing->XAxiDmaBdRingFromHw(m_RxBdRing->m_AllCnt, &bd_set_ptr);
+
+            if (completed_bds > 0)
+            {
+                AxiDmaBd current_bd;
+                current_bd.SetBaseAddress(bd_set_ptr);
+
+                std::uint32_t buffer_phys_addr = current_bd.XAxiDmaBdGetBufAddr();
+                std::uint32_t transfer_length = current_bd.XAxiDmaBdGetLength();
+
+                std::size_t data_offset = buffer_phys_addr - m_RxDataBaseAddr;
+
+                std::byte *buffer_base_virt = m_CacheManager->BufferPtr(m_RxDataBufferConfig.buffer_name);
+                m_CurrentRxBufferAddr = reinterpret_cast<std::uintptr_t>(buffer_base_virt + data_offset);
+
+                m_CacheManager->InvalidateCache(m_RxDataBufferConfig.buffer_name,
+                                                data_offset, transfer_length,
+                                                UDmaBuffer::SyncDirection::DMA_FROM_DEVICE);
+
+                if (m_RxBdRing->m_Cyclic)
+                {
+                    m_RxChannel->XAxiDmaSetTailDescriptor(m_RxBdRing->m_LastBdPhysAddr);
+                }
+            }
+        }
+    }
+
 } // namespace Dma

@@ -61,6 +61,11 @@ namespace Dma
         // void AttachInterruptTxHandler(const std::function<void()> &callback, bool queue_enabled = false);
         // void DetachTxInterruptHandler();
 
+        bool ReadInterruptStatusRx() const;
+        void AckInterruptRx(uint32_t irq_status);
+        void ClearInterruptsRx();
+        void ProcessCompletedBDsRx();
+
     private:
         std::shared_ptr<UIO> m_UioDevice;
         std::shared_ptr<AxiDmaChannel> m_TxChannel;

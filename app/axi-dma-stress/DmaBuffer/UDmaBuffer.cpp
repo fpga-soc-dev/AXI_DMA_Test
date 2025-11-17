@@ -215,6 +215,9 @@ namespace Dma
 
     void UDmaBuffer::InvalidateCache(const std::string &buffer_name)
     {
+        if (m_Policy == CachePolicy::NonCached)
+            return;
+
         auto it = m_Buffers.find(buffer_name);
         if (it == m_Buffers.end())
         {
@@ -231,6 +234,9 @@ namespace Dma
 
     void UDmaBuffer::InvalidateCache(const std::string &buffer_name, std::size_t offset, std::size_t size, SyncDirection sync_direction)
     {
+        if (m_Policy == CachePolicy::NonCached)
+            return;
+
         auto it = m_Buffers.find(buffer_name);
         if (it == m_Buffers.end())
         {
@@ -253,20 +259,20 @@ namespace Dma
 
     void UDmaBuffer::FlushCache(const std::string &buffer_name)
     {
-        if (m_Policy == CachePolicy::Cached)
-        {
-            auto it = m_Buffers.find(buffer_name);
-            if (it == m_Buffers.end())
-            {
-                SPDLOG_ERROR("FlushCache: invalid buffer name: {}", buffer_name);
-                return;
-            }
+        if (m_Policy == CachePolicy::NonCached)
+            return;
 
-            uint64_t sync_for_device = 1;
-            if (::ioctl(it->second.fd, U_DMA_BUF_IOCTL_SET_SYNC_FOR_DEVICE, &sync_for_device) < 0)
-            {
-                SPDLOG_ERROR("Failed to flush cache for {}", buffer_name);
-            }
+        auto it = m_Buffers.find(buffer_name);
+        if (it == m_Buffers.end())
+        {
+            SPDLOG_ERROR("FlushCache: invalid buffer name: {}", buffer_name);
+            return;
+        }
+
+        uint64_t sync_for_device = 1;
+        if (::ioctl(it->second.fd, U_DMA_BUF_IOCTL_SET_SYNC_FOR_DEVICE, &sync_for_device) < 0)
+        {
+            SPDLOG_ERROR("Failed to flush cache for {}", buffer_name);
         }
     }
 
