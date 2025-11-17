@@ -134,7 +134,6 @@ xilinx.com:ip:processing_system7:*\
 xilinx.com:ip:smartconnect:*\
 xilinx.com:ip:xlconcat:*\
 xilinx.com:ip:axi_dma:*\
-xilinx.com:ip:axis_dwidth_converter:*\
 "
 
    set list_ips_missing ""
@@ -821,18 +820,12 @@ proc create_root_design { parentCell } {
   ] $smartconnect_1
 
 
-  # Create instance: axis_dwidth_converter_0, and set properties
-  set axis_dwidth_converter_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:axis_dwidth_converter axis_dwidth_converter_0 ]
-  set_property CONFIG.M_TDATA_NUM_BYTES {32} $axis_dwidth_converter_0
-
-
   # Create interface connections
   connect_bd_intf_net -intf_net DataGenerator_0_m_axis [get_bd_intf_pins DataGenerator_0/m_axis] [get_bd_intf_pins axi_dma_0/S_AXIS_S2MM]
-  connect_bd_intf_net -intf_net DataGenerator_1_m_axis [get_bd_intf_pins DataGenerator_1/m_axis] [get_bd_intf_pins axis_dwidth_converter_0/S_AXIS]
+  connect_bd_intf_net -intf_net DataGenerator_1_m_axis [get_bd_intf_pins DataGenerator_1/m_axis] [get_bd_intf_pins axi_dma_1/S_AXIS_S2MM]
   connect_bd_intf_net -intf_net axi_dma_0_M_AXI_S2MM [get_bd_intf_pins axi_dma_0/M_AXI_S2MM] [get_bd_intf_pins smartconnect_0/S00_AXI]
   connect_bd_intf_net -intf_net axi_dma_1_M_AXI_S2MM [get_bd_intf_pins axi_dma_1/M_AXI_S2MM] [get_bd_intf_pins smartconnect_1/S00_AXI]
   connect_bd_intf_net -intf_net axi_dma_1_M_AXI_SG [get_bd_intf_pins axi_dma_1/M_AXI_SG] [get_bd_intf_pins smartconnect_1/S01_AXI]
-  connect_bd_intf_net -intf_net axis_dwidth_converter_0_M_AXIS [get_bd_intf_pins axis_dwidth_converter_0/M_AXIS] [get_bd_intf_pins axi_dma_1/S_AXIS_S2MM]
   connect_bd_intf_net -intf_net ps7_0_DDR [get_bd_intf_ports DDR] [get_bd_intf_pins ps7_0/DDR]
   connect_bd_intf_net -intf_net ps7_0_FIXED_IO [get_bd_intf_ports FIXED_IO] [get_bd_intf_pins ps7_0/FIXED_IO]
   connect_bd_intf_net -intf_net ps7_0_M_AXI_GP0 [get_bd_intf_pins ps7_0/M_AXI_GP0] [get_bd_intf_pins ps_ctrl_axi/S00_AXI]
@@ -871,8 +864,7 @@ proc create_root_design { parentCell } {
   [get_bd_pins DataGenerator_0/s_axi_aclk] \
   [get_bd_pins DataGenerator_0/m_axis_aclk] \
   [get_bd_pins DataGenerator_1/s_axi_aclk] \
-  [get_bd_pins DataGenerator_1/m_axis_aclk] \
-  [get_bd_pins axis_dwidth_converter_0/aclk]
+  [get_bd_pins DataGenerator_1/m_axis_aclk]
   connect_bd_net -net ps7_0_FCLK_RESET0_N  [get_bd_pins ps7_0/FCLK_RESET0_N] \
   [get_bd_pins rst_clk_wiz_0_100M/ext_reset_in] \
   [get_bd_ports FCLK_RESET_N] \
@@ -884,8 +876,7 @@ proc create_root_design { parentCell } {
   [get_bd_pins DataGenerator_0/s_axi_aresetn] \
   [get_bd_pins DataGenerator_0/m_axis_aresetn] \
   [get_bd_pins DataGenerator_1/s_axi_aresetn] \
-  [get_bd_pins DataGenerator_1/m_axis_aresetn] \
-  [get_bd_pins axis_dwidth_converter_0/aresetn]
+  [get_bd_pins DataGenerator_1/m_axis_aresetn]
   connect_bd_net -net rst_clk_wiz_0_200M_peripheral_aresetn  [get_bd_pins rst_clk_wiz_0_200M/peripheral_aresetn] \
   [get_bd_pins axi_dma_0/axi_resetn] \
   [get_bd_pins axi_dma_1/axi_resetn]

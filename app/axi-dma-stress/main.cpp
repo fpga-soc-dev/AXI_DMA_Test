@@ -136,7 +136,7 @@ void TestAxiDmaSimpleSingleChannel()
     SPDLOG_INFO("Data integrity verified for all captured frames.");
 }
 
-void TestAxiDmaCyclicSingleChannel()
+void TestAxiDmaCyclicSingleChannel(std::uint32_t sample_count_in_frame, std::uint32_t frame_interval_us, std::uint32_t bd_count, std::uint32_t test_duration_seconds = 5)
 {
     Dma::AxiDma::Config dma_config{
         .HasStsCntrlStrm = false,
@@ -155,21 +155,18 @@ void TestAxiDmaCyclicSingleChannel()
         .AddressWidth = 32,
         .BufferLengthRegister = 26};
 
-    static constexpr uint32_t TEST_SAMPLE_COUNT = 1024 * 16;
-    static constexpr uint32_t TEST_FRAME_INTERVAL_US = 1000u;
-
     std::vector<std::vector<int>> results;
 
     AxiDataGen dataGen("data-generator-dma-sg");
-    dataGen.SetConfig(TEST_SAMPLE_COUNT, TEST_FRAME_INTERVAL_US);
+    dataGen.SetConfig(sample_count_in_frame, frame_interval_us);
 
     Dma::UDmaBuffer dmaBuffer(Dma::UDmaBuffer::CachePolicy::Cached);
-    uint32_t frame_size = TEST_SAMPLE_COUNT * sizeof(uint32_t);
+    uint32_t frame_size = sample_count_in_frame * sizeof(uint32_t);
 
     Dma::UDmaBufferAllocate::UdmaBufConfig buffer_config{
         .buffer_vec = {
-            {0, frame_size * 16}, // for streamdata bd count * one frame size udmabuf0
-            {1, 64 * 16}          // sizeof bd * bd_count for BD descriptors udmabuf1
+            {0, frame_size * bd_count}, // for streamdata bd count * one frame size udmabuf0
+            {1, 64 * bd_count}          // sizeof bd * bd_count for BD descriptors udmabuf1
         }};
 
     if (!dmaBuffer.CreateBuffer(buffer_config))
@@ -204,13 +201,13 @@ void TestAxiDmaCyclicSingleChannel()
           
         interrupt_count++; }, false);
 
-    SPDLOG_INFO("Starting 10-second test with single frame transfers...");
+    SPDLOG_INFO("Starting {} seconds test with single frame transfers...", test_duration_seconds);
 
     axiDma.XAxiDmaRxCyclicTransfer();
     dataGen.Start();
 
     auto start_time = std::chrono::high_resolution_clock::now();
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::this_thread::sleep_for(std::chrono::seconds(test_duration_seconds));
 
     auto end_time = std::chrono::high_resolution_clock::now();
     double test_duration = std::chrono::duration<double>(end_time - start_time).count();
@@ -234,7 +231,7 @@ void TestAxiDmaCyclicSingleChannel()
     bandwidth.PrintAnalysis();
 
     double frame_rate = results.size() / test_duration;
-    double expected_frame_rate = 1000000.0 / TEST_FRAME_INTERVAL_US;
+    double expected_frame_rate = 1000000.0 / frame_interval_us;
 
     SPDLOG_INFO("=== PERFORMANCE METRICS ===");
     SPDLOG_INFO("Expected frame rate: {:.2f} Hz", expected_frame_rate);
@@ -243,8 +240,6 @@ void TestAxiDmaCyclicSingleChannel()
 
     int correct_frames = 0;
     int incorrect_frames = 0;
-    int total_word_errors = 0;
-    int prev_frame_number = -1;
 
     for (size_t frame_idx = 0; frame_idx < results.size(); ++frame_idx)
     {
@@ -256,19 +251,12 @@ void TestAxiDmaCyclicSingleChannel()
             continue;
         }
 
-        int frame_number = frame[0];
-
-        prev_frame_number = frame_number;
-
         bool frame_valid = true;
-        int frame_word_errors = 0;
 
         for (int i = 1; i < frame.size(); ++i)
         {
-            int expected_value = frame_number + i;
-            if (frame[i] != expected_value)
+            if (frame[i] != frame[0] + i)
             {
-                frame_word_errors++;
                 frame_valid = false;
             }
         }
@@ -280,7 +268,6 @@ void TestAxiDmaCyclicSingleChannel()
         else
         {
             incorrect_frames++;
-            total_word_errors += frame_word_errors;
         }
     }
 
@@ -291,15 +278,26 @@ void TestAxiDmaCyclicSingleChannel()
     SPDLOG_INFO("Frame integrity rate: {:.2f}%", (correct_frames * 100.0) / results.size());
 }
 
-int main()
+int main(int argc, char *argv[])
 {
     spdlog::set_level(spdlog::level::debug);
     spdlog::set_pattern("[%^%l%$] %v");
 
+    if (argc < 5)
+    {
+        SPDLOG_ERROR("Usage: {} <samples_per_frame> <frame_interval_us> <bd_count> <test_duration_seconds>", argv[0]);
+        return -1;
+    }
+
+    std::uint32_t sample_count_in_frame = std::stoi(argv[1]);
+    std::uint32_t frame_interval_us = std::stoi(argv[2]);
+    std::uint32_t bd_count = std::stoi(argv[3]);
+    std::uint32_t test_duration_seconds = std::stoi(argv[4]);
+
     try
     {
         // TestAxiDmaSimpleSingleChannel();
-        TestAxiDmaCyclicSingleChannel();
+        TestAxiDmaCyclicSingleChannel(sample_count_in_frame, frame_interval_us, bd_count, test_duration_seconds);
     }
     catch (const std::exception &e)
     {
