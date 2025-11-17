@@ -57,6 +57,7 @@ void AxiDataGen::Start()
     ClearAverageInterval();
     SoftReset();
 
+    m_UioDevice->Write(STATUS_CLR, 0x0);
     m_UioDevice->Write(FRAME_ID, 0x0);
     if (m_UioDevice->Read(FRAME_ID) != 0x0)
     {
