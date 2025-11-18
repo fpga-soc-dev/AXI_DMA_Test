@@ -74,27 +74,39 @@ uint32_t AxiDataGen::ComputeSamplePeriod(uint32_t interval_us,
                                          1'000'000u;
 
     const uint64_t data_transfer_clocks = static_cast<uint64_t>(frame_samples);
+    const uint64_t minimum_gap_clocks = 100;
+    uint64_t gap_clocks;
 
     if (total_target_clocks <= data_transfer_clocks)
     {
-        SPDLOG_WARN("Requested interval too small to accommodate data transfer. Setting SAMPLE_PERIOD to 0.");
-        return 0;
+        SPDLOG_WARN("Requested interval ({} us) too small to accommodate data transfer. Using minimum gap of {} clocks.",
+                    interval_us, minimum_gap_clocks);
+        gap_clocks = minimum_gap_clocks;
     }
     else
     {
-        uint64_t gap_clocks = total_target_clocks - data_transfer_clocks;
+        gap_clocks = total_target_clocks - data_transfer_clocks;
 
-        if (gap_clocks > 0xFFFFFFFFull)
+        // Ensure minimum gap
+        if (gap_clocks < minimum_gap_clocks)
         {
-            gap_clocks = 0xFFFFFFFFull;
+            SPDLOG_WARN("Calculated gap ({} clocks) too small. Using minimum gap of {} clocks.",
+                        gap_clocks, minimum_gap_clocks);
+            gap_clocks = minimum_gap_clocks;
         }
-        SPDLOG_DEBUG("Computed SAMPLE_PERIOD: interval_us={}, total_target_clocks={}, data_transfer_clocks={}, gap_clocks={}",
-                     interval_us,
-                     total_target_clocks,
-                     data_transfer_clocks,
-                     gap_clocks);
-        return static_cast<uint32_t>(gap_clocks);
     }
+
+    if (gap_clocks > 0xFFFFFFFFull)
+    {
+        gap_clocks = 0xFFFFFFFFull;
+    }
+
+    SPDLOG_DEBUG("Computed SAMPLE_PERIOD: interval_us={}, total_target_clocks={}, data_transfer_clocks={}, gap_clocks={}",
+                 interval_us,
+                 total_target_clocks,
+                 data_transfer_clocks,
+                 gap_clocks);
+    return static_cast<uint32_t>(gap_clocks);
 }
 
 uint32_t AxiDataGen::GetFrameSize()

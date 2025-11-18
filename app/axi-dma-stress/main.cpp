@@ -136,7 +136,7 @@ void TestAxiDmaSimpleSingleChannel()
     SPDLOG_INFO("Data integrity verified for all captured frames.");
 }
 
-void TestAxiDmaCyclicSingleChannel(std::uint32_t sample_count_in_frame, std::uint32_t frame_interval_us, std::uint32_t bd_count, std::uint32_t test_duration_seconds = 5)
+void TestAxiDmaCyclicSingleChannel(std::uint32_t sample_count_in_frame, std::uint32_t frame_interval_us, std::uint32_t bd_count, std::uint32_t test_duration_seconds = 5, Dma::UDmaBuffer::CachePolicy cache_policy = Dma::UDmaBuffer::CachePolicy::NonCached, std::uint32_t read_sample_count = 11)
 {
     Dma::AxiDma::Config dma_config{
         .HasStsCntrlStrm = false,
@@ -158,7 +158,7 @@ void TestAxiDmaCyclicSingleChannel(std::uint32_t sample_count_in_frame, std::uin
     AxiDataGen dataGen("data-generator-dma-sg");
     dataGen.SetConfig(sample_count_in_frame, frame_interval_us);
 
-    Dma::UDmaBuffer dmaBuffer(Dma::UDmaBuffer::CachePolicy::NonCached);
+    Dma::UDmaBuffer dmaBuffer(cache_policy);
     uint32_t frame_size = sample_count_in_frame * sizeof(uint32_t);
 
     Dma::UDmaBufferAllocate::UdmaBufConfig buffer_config{
@@ -180,7 +180,7 @@ void TestAxiDmaCyclicSingleChannel(std::uint32_t sample_count_in_frame, std::uin
     std::atomic<int> interrupt_count{0};
     std::atomic<int> correct_frames{0};
     std::atomic<int> incorrect_frames{0};
-    std::vector<float> check_percentages = {0.0f, 0.10f, 0.20f, 0.30f, .40f, 0.50f, 0.60f, 0.70f, 0.80f, 0.90f, 1.0f};
+
     axiDma.AttachInterruptRxHandler([&]()
                                     {
         if (!test_running.load())
@@ -191,18 +191,14 @@ void TestAxiDmaCyclicSingleChannel(std::uint32_t sample_count_in_frame, std::uin
         std::uint32_t* buffer_start = axiDma.GetCurrentBufferAddress();
         std::uint32_t frame_id = buffer_start[0];
 
-        std::uint32_t mid = sample_count_in_frame / 2;
-        std::uint32_t end = sample_count_in_frame - 1;
-        
-
         bool frame_valid = true;
 
-        for (float percentage : check_percentages) {
-            std::uint32_t index = static_cast<std::uint32_t>(percentage * (sample_count_in_frame - 1));
-            std::uint32_t expected_value = frame_id + index;
-            
-            if (buffer_start[index] != expected_value) {
-                frame_valid = false;               
+        for (std::uint32_t i = 0; i < read_sample_count; ++i)
+        {
+            std::uint32_t expected_value = frame_id + i;            
+            if (buffer_start[i] != expected_value)
+            {
+                frame_valid = false;
             }
         }
 
@@ -253,7 +249,7 @@ void TestAxiDmaCyclicSingleChannel(std::uint32_t sample_count_in_frame, std::uin
     SPDLOG_INFO("Incorrect frames: {}", incorrect_frames.load());
 }
 
-void TestAxiDmaCyclicSingleChannelPolling(std::uint32_t sample_count_in_frame, std::uint32_t frame_interval_us, std::uint32_t bd_count, std::uint32_t test_duration_seconds = 5)
+void TestAxiDmaCyclicSingleChannelPolling(std::uint32_t sample_count_in_frame, std::uint32_t frame_interval_us, std::uint32_t bd_count, std::uint32_t test_duration_seconds = 5, Dma::UDmaBuffer::CachePolicy cache_policy = Dma::UDmaBuffer::CachePolicy::NonCached, std::uint32_t read_sample_count = 11)
 {
     SPDLOG_INFO("Starting AxiDma Cyclic Single Channel Polling Test...");
     Dma::AxiDma::Config dma_config{
@@ -278,7 +274,7 @@ void TestAxiDmaCyclicSingleChannelPolling(std::uint32_t sample_count_in_frame, s
     AxiDataGen dataGen("data-generator-dma-sg");
     dataGen.SetConfig(sample_count_in_frame, frame_interval_us);
 
-    Dma::UDmaBuffer dmaBuffer(Dma::UDmaBuffer::CachePolicy::NonCached);
+    Dma::UDmaBuffer dmaBuffer(cache_policy);
     uint32_t frame_size = sample_count_in_frame * sizeof(uint32_t);
 
     Dma::UDmaBufferAllocate::UdmaBufConfig buffer_config{
@@ -300,7 +296,6 @@ void TestAxiDmaCyclicSingleChannelPolling(std::uint32_t sample_count_in_frame, s
     std::atomic<int> interrupt_count{0};
     std::atomic<int> correct_frames{0};
     std::atomic<int> incorrect_frames{0};
-    std::vector<float> check_percentages = {0.0f, 0.10f, 0.20f, 0.30f, .40f, 0.50f, 0.60f, 0.70f, 0.80f, 0.90f, 1.0f};
 
     auto start_time = std::chrono::steady_clock::now();
     auto end_time = start_time;
@@ -323,17 +318,12 @@ void TestAxiDmaCyclicSingleChannelPolling(std::uint32_t sample_count_in_frame, s
             std::uint32_t *buffer_start = axiDma.GetCurrentBufferAddress();
             std::uint32_t frame_id = buffer_start[0];
 
-            std::uint32_t mid = sample_count_in_frame / 2;
-            std::uint32_t end = sample_count_in_frame - 1;
-
             bool frame_valid = true;
 
-            for (float percentage : check_percentages)
+            for (std::uint32_t i = 0; i < read_sample_count; ++i)
             {
-                std::uint32_t index = static_cast<std::uint32_t>(percentage * (sample_count_in_frame - 1));
-                std::uint32_t expected_value = frame_id + index;
-
-                if (buffer_start[index] != expected_value)
+                std::uint32_t expected_value = frame_id + i;
+                if (buffer_start[i] != expected_value)
                 {
                     frame_valid = false;
                 }
@@ -387,9 +377,15 @@ int main(int argc, char *argv[])
     spdlog::set_level(spdlog::level::debug);
     spdlog::set_pattern("[%^%l%$] %v");
 
-    if (argc < 5)
+    if (argc < 7)
     {
-        SPDLOG_ERROR("Usage: {} <samples_per_frame> <frame_interval_us> <bd_count> <test_duration_seconds>", argv[0]);
+        SPDLOG_ERROR("Usage: {} <samples_per_frame> <frame_interval_us> <bd_count> <test_duration_seconds> <cache_policy> <read_sample_count>", argv[0]);
+        SPDLOG_ERROR("  samples_per_frame: Number of samples in each frame");
+        SPDLOG_ERROR("  frame_interval_us: Interval between frames in microseconds");
+        SPDLOG_ERROR("  bd_count: Number of buffer descriptors");
+        SPDLOG_ERROR("  test_duration_seconds: Duration of test in seconds");
+        SPDLOG_ERROR("  cache_policy: 'cached' or 'noncached'");
+        SPDLOG_ERROR("  read_sample_count: Number of samples to read/validate per frame (must be <= samples_per_frame)");
         return -1;
     }
 
@@ -397,12 +393,44 @@ int main(int argc, char *argv[])
     std::uint32_t frame_interval_us = std::stoi(argv[2]);
     std::uint32_t bd_count = std::stoi(argv[3]);
     std::uint32_t test_duration_seconds = std::stoi(argv[4]);
+    std::string cache_policy_str = argv[5];
+    std::uint32_t read_sample_count = std::stoi(argv[6]);
+
+    Dma::UDmaBuffer::CachePolicy cache_policy;
+    if (cache_policy_str == "cached")
+    {
+        cache_policy = Dma::UDmaBuffer::CachePolicy::Cached;
+        SPDLOG_INFO("Using cached memory policy");
+    }
+    else if (cache_policy_str == "noncached")
+    {
+        cache_policy = Dma::UDmaBuffer::CachePolicy::NonCached;
+        SPDLOG_INFO("Using non-cached memory policy");
+    }
+    else
+    {
+        SPDLOG_ERROR("Invalid cache policy '{}'. Use 'cached' or 'noncached'", cache_policy_str);
+        return -1;
+    }
+
+    if (read_sample_count == 0)
+    {
+        SPDLOG_ERROR("read_sample_count must be greater than 0");
+        return -1;
+    }
+
+    if (read_sample_count > sample_count_in_frame)
+    {
+        SPDLOG_ERROR("read_sample_count ({}) cannot be greater than samples_per_frame ({})",
+                     read_sample_count, sample_count_in_frame);
+        return -1;
+    }
 
     try
     {
         // TestAxiDmaSimpleSingleChannel();
-        TestAxiDmaCyclicSingleChannel(sample_count_in_frame, frame_interval_us, bd_count, test_duration_seconds);
-        // TestAxiDmaCyclicSingleChannelPolling(sample_count_in_frame, frame_interval_us, bd_count, test_duration_seconds);
+        // TestAxiDmaCyclicSingleChannel(sample_count_in_frame, frame_interval_us, bd_count, test_duration_seconds, cache_policy, read_sample_count);
+        TestAxiDmaCyclicSingleChannelPolling(sample_count_in_frame, frame_interval_us, bd_count, test_duration_seconds, cache_policy, read_sample_count);
     }
     catch (const std::exception &e)
     {
