@@ -377,15 +377,16 @@ int main(int argc, char *argv[])
     spdlog::set_level(spdlog::level::debug);
     spdlog::set_pattern("[%^%l%$] %v");
 
-    if (argc < 7)
+    if (argc < 8)
     {
-        SPDLOG_ERROR("Usage: {} <samples_per_frame> <frame_interval_us> <bd_count> <test_duration_seconds> <cache_policy> <read_sample_count>", argv[0]);
+        SPDLOG_ERROR("Usage: {} <samples_per_frame> <frame_interval_us> <bd_count> <test_duration_seconds> <cache_policy> <read_sample_count> <mode>", argv[0]);
         SPDLOG_ERROR("  samples_per_frame: Number of samples in each frame");
         SPDLOG_ERROR("  frame_interval_us: Interval between frames in microseconds");
         SPDLOG_ERROR("  bd_count: Number of buffer descriptors");
         SPDLOG_ERROR("  test_duration_seconds: Duration of test in seconds");
         SPDLOG_ERROR("  cache_policy: 'cached' or 'noncached'");
         SPDLOG_ERROR("  read_sample_count: Number of samples to read/validate per frame (must be <= samples_per_frame)");
+        SPDLOG_ERROR("  mode: 'poll' or 'event' (interrupt-driven)");
         return -1;
     }
 
@@ -395,6 +396,7 @@ int main(int argc, char *argv[])
     std::uint32_t test_duration_seconds = std::stoi(argv[4]);
     std::string cache_policy_str = argv[5];
     std::uint32_t read_sample_count = std::stoi(argv[6]);
+    std::string mode_str = argv[7];
 
     Dma::UDmaBuffer::CachePolicy cache_policy;
     if (cache_policy_str == "cached")
@@ -413,6 +415,23 @@ int main(int argc, char *argv[])
         return -1;
     }
 
+    bool use_polling = false;
+    if (mode_str == "poll")
+    {
+        use_polling = true;
+        SPDLOG_INFO("Using polling mode");
+    }
+    else if (mode_str == "event")
+    {
+        use_polling = false;
+        SPDLOG_INFO("Using interrupt (event) mode");
+    }
+    else
+    {
+        SPDLOG_ERROR("Invalid mode '{}'. Use 'poll' or 'event'", mode_str);
+        return -1;
+    }
+
     if (read_sample_count == 0)
     {
         SPDLOG_ERROR("read_sample_count must be greater than 0");
@@ -428,9 +447,19 @@ int main(int argc, char *argv[])
 
     try
     {
+        if (use_polling)
+        {
+            SPDLOG_INFO("Starting polling mode test...");
+            TestAxiDmaCyclicSingleChannelPolling(sample_count_in_frame, frame_interval_us, bd_count,
+                                                 test_duration_seconds, cache_policy, read_sample_count);
+        }
+        else
+        {
+            SPDLOG_INFO("Starting interrupt (event) mode test...");
+            TestAxiDmaCyclicSingleChannel(sample_count_in_frame, frame_interval_us, bd_count,
+                                          test_duration_seconds, cache_policy, read_sample_count);
+        }
         // TestAxiDmaSimpleSingleChannel();
-        // TestAxiDmaCyclicSingleChannel(sample_count_in_frame, frame_interval_us, bd_count, test_duration_seconds, cache_policy, read_sample_count);
-        TestAxiDmaCyclicSingleChannelPolling(sample_count_in_frame, frame_interval_us, bd_count, test_duration_seconds, cache_policy, read_sample_count);
     }
     catch (const std::exception &e)
     {
