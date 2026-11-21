@@ -80,7 +80,9 @@ Two out-of-tree kernel modules are built and installed:
 
 - `u-dma-buf` — exposes a contiguous, userspace-accessible DMA buffer
   (`/dev/udmabuf0`) used for the DMA transfers.
-- `dma-proxy` — Xilinx' alternative DMA proxy interface (used by `AxiDmaProxy`).
+- `dma-proxy` — Xilinx' DMA proxy interface (built and installed, but the
+  active test path uses UIO + `udmabuf`; the `dma_proxy` device-tree node is
+  currently commented out).
 
 ## Application (`app/axi-dma-stress`)
 
@@ -92,7 +94,9 @@ A C++20 userspace AXI DMA driver and stress test:
 - `AxiDataGen/` — configures and starts the `DataGenerator` test-pattern source.
 - `DmaBuffer/` — allocates the DMA buffer via `u-dma-buf` (`UDmaBuffer`,
   `UDmaBufferAllocate`, `UDmaBufferIoctl`).
-- `AxiDmaProxy/` — alternative path through the `dma-proxy` kernel module.
+- `AxiDmaProxy/` and `AxiTrafficGen/` — experimental helpers for the
+  `dma-proxy` path. Provided as source but **not currently compiled** into the
+  binary (they are not listed in `CMakeLists.txt`).
 - `UIO/` — maps `/dev/uioX` device nodes into userspace.
 - `Utilities/` — RAII file handles, `mmap` file mapping, `epoll`, helpers.
 - `main.cpp` — runs the stress test, collects interrupt counts and computes
